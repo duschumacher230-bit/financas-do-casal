@@ -127,6 +127,7 @@ import { DB, Conta } from './firebase-shim.js';
     casal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3.2"/><circle cx="16.5" cy="9" r="2.8"/><path d="M2.5 20c1-3.5 3-5 5.5-5s4.5 1.5 5.5 5M13 15.6c1-.4 2-.6 3.5-.6 2.4 0 4.2 1.4 5 5"/></svg>',
     evolucao: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7"/><path d="M3 20h18"/></svg>',
     metas: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 10c0-3.3-3.1-6-7-6S5 6.7 5 10c0 1.9 1 3.6 2.6 4.7L7 19h3l.5-2h3l.5 2h3l-.6-4.3c1-.7 1.8-1.6 2.2-2.7H21v-3h-2.2c.1.3.2.6.2 1z"/><circle cx="15" cy="9.5" r=".6" fill="currentColor"/></svg>',
+    ajuda: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M9.3 9.2a2.8 2.8 0 0 1 5.4.9c0 1.9-2.7 2.5-2.7 4.1"/><circle cx="12" cy="17.6" r=".6" fill="currentColor"/></svg>',
     busca: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
     viagem: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>',
   };
@@ -262,7 +263,7 @@ import { DB, Conta } from './firebase-shim.js';
     const hoje = S.mes !== mesHoje() ? '<button class="hoje" data-act="mes-hoje" type="button">Hoje</button>' : '';
     const mostraMes = S.aba !== 'metas';
     return '<div class="top-row"><div class="brand">' + pair + '<h1>Finanças do Casal</h1></div>' +
-      '<div class="top-acts"><button class="icon-btn" type="button" data-act="ir" data-tab="busca" aria-label="Buscar lançamentos">' + ICON.busca + '</button><button class="icon-btn" type="button" data-act="config" aria-label="Configurações">' + ICON.gear + '</button></div></div>' +
+      '<div class="top-acts"><button class="icon-btn' + (lsGet('tour-ok') ? '' : ' tour-pulso') + '" type="button" data-act="tour" aria-label="Tour guiado desta aba" title="Tour guiado">' + ICON.ajuda + '</button><button class="icon-btn" type="button" data-act="ir" data-tab="busca" aria-label="Buscar lançamentos">' + ICON.busca + '</button><button class="icon-btn" type="button" data-act="config" aria-label="Configurações">' + ICON.gear + '</button></div></div>' +
       (mostraMes ? '<div class="month"><button type="button" data-act="mes-prev" aria-label="Mês anterior">' + ICON.left + '</button><div class="label">' + nomeMes(S.mes) + '</div>' + hoje + '<button type="button" data-act="mes-next" aria-label="Próximo mês">' + ICON.right + '</button></div>' : '');
   }
 
@@ -283,7 +284,7 @@ import { DB, Conta } from './firebase-shim.js';
     const segs = [];
     ps.forEach((p) => { const v = m.cartoes[p.id].gastos; if (v > 0) segs.push({ cor: p.cor, v, nome: 'Gastos de ' + p.nome }); });
     if (m.conj.total > 0) segs.push({ cor: 'var(--muted)', v: m.conj.total, nome: 'Do casal' });
-    if (t.guardado > 0) segs.push({ cor: 'var(--pos)', v: t.guardado, nome: 'Viagem' });
+    if (t.guardado > 0) segs.push({ cor: 'var(--pos)', v: t.guardado, nome: 'Metas' });
     h += '<section class="card" aria-labelledby="h-casal"><div class="card-head"><div><div class="eyebrow">Casal · ' + esc(mesLongo(m.mes)) + '</div><h2 id="h-casal" class="sr">Saldo do casal</h2></div>' +
       (t.pctComprometido != null ? '<span class="badge">' + pct(t.pctComprometido) + ' da renda comprometida</span>' : '') + '</div>' +
       '<div><div class="sub">Sobra do casal no mês</div><div class="money-big ' + valorCls(t.saldo) + '">' + fmt(t.saldo) + '</div></div>' +
@@ -2269,6 +2270,269 @@ import { DB, Conta } from './firebase-shim.js';
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 2000);
   }
 
+  /* ---------- tour guiado ---------- */
+  const NOME_ABA = { painel: 'Painel', meus: 'Meus', casal: 'Casal', metas: 'Metas', evolucao: 'Evolução', busca: 'Busca' };
+  const secTitulo = (txt) => () => { const h = $$('#main section h2').find((x) => x.textContent.trim().startsWith(txt)); return h ? h.closest('section') : null; };
+  const secDe = (sel) => () => { const e = $(sel); return e ? e.closest('section') : null; };
+  const campo = (sel) => () => { const e = $(sel); return e ? e.closest('.field') || e : null; };
+  const garantir = (sel, abrir) => () => { if (!$(sel)) abrir(); };
+  const fecharSe = () => { if ($('#modal').innerHTML) fecharModal(); };
+  const modoEvo = (k) => () => { if (S.evoModo !== k) { S.evoModo = k; render(); } };
+
+  const PASSOS_TOPO = [
+    { alvo: '.month', t: 'Mês', x: 'Use as setas para ver outros meses. “Hoje” volta para o mês atual. Tudo na tela segue o mês escolhido.' },
+  ];
+
+  function tourAba(aba) {
+    const fim = (txt) => ({ t: 'Pronto!', x: txt || 'Quando bater dúvida, toque no ? de novo. Cada aba tem o seu tour.' });
+    if (aba === 'painel') return [
+      { t: 'Tour do Painel', x: 'O Painel é o resumo do mês de vocês dois. Vou passar por cada parte. Use Próximo para avançar.' },
+      ...PASSOS_TOPO,
+      { alvo: '.quick', t: 'Lançamento rápido', x: 'Escreva ou fale do jeito que você falaria: “mercado 230 casal”, “uber 25 ontem”. O app monta os lançamentos e mostra antes de salvar.' },
+      { alvo: '.fech-card', t: 'Fechamento do mês', x: 'No começo do mês aparece o relatório do mês que passou: quanto sobrou, maiores gastos, orçamento e acerto.' },
+      { alvo: secDe('#h-casal'), t: 'Resumo do casal', x: 'Sobra do mês = renda dos dois − despesas − o que foi guardado nas metas. A barra mostra para onde foi a renda.' },
+      { alvo: '.alert-card', t: 'Alertas', x: 'Categorias que passaram ou chegaram perto (80%) do limite que vocês definiram. Toque para ir até elas.' },
+      { alvo: secTitulo('Vencimentos'), t: 'Vencimentos', x: 'Contas atrasadas e as que vencem nos próximos 7 dias. Toque em “Pagar” quando quitar.' },
+      { alvo: '.people', t: 'Cada um', x: 'Renda, gastos e quanto da renda já está comprometida. Da outra pessoa você vê só os totais; os detalhes são privados.' },
+      { alvo: secTitulo('Acerto do mês'), t: 'Acerto', x: 'Mostra quem pagou mais nas despesas do casal e quanto o outro transfere para a divisão ficar justa.' },
+      { alvo: secTitulo('Metas'), t: 'Metas', x: 'Quanto já guardaram em cada meta, como a viagem. Toque em “Abrir” para guardar dinheiro.' },
+      { alvo: '#tabs', t: 'Abas', x: 'Meus: seus lançamentos privados. Casal: despesas dos dois. Metas: cofrinhos. Evolução: gráficos e previsão.' },
+      { alvo: '[data-act=ir][data-tab=busca]', t: 'Busca', x: 'Procure qualquer lançamento por nome, categoria ou valor, com filtros de período e situação.' },
+      { alvo: '[data-act=config]', t: 'Configurações', x: 'Seu nome e cor, divisão do casal, categorias, cartões, importar e exportar planilha e troca de senha.' },
+      { alvo: '#fab', t: 'Novo lançamento', x: 'O botão + abre o formulário. Para ver o passo a passo de um lançamento, escolha “Como fazer um lançamento” no ?.' },
+      fim(),
+    ];
+    if (aba === 'meus') return [
+      { t: 'Tour de Meus', x: 'Aqui ficam os seus lançamentos pessoais: renda e gastos que são só seus. Ninguém mais vê esta lista.' },
+      ...PASSOS_TOPO,
+      { alvo: () => { const s = $('#main section'); return s; }, t: 'Seu mês', x: 'Renda, gastos e saldo pessoal do mês. A outra pessoa vê só esses totais, nunca os itens.' },
+      { alvo: secDe('[data-act=limites][data-esc=meu]'), t: 'Orçamento', x: 'Defina um limite por categoria (ex.: R$ 600 em restaurante). O app avisa quando chega a 80% e quando passa.' },
+      { alvo: secTitulo('Cartões de crédito'), t: 'Cartões', x: 'Cadastre o cartão com dia de fechamento e vencimento. Compras no cartão caem na fatura certa, inclusive parceladas.' },
+      { alvo: secDe('[data-act=fixa-nova][data-esc=meu]'), t: 'Contas fixas', x: 'Salário, academia, assinaturas… cadastre uma vez e o app lança sozinho todo mês. Dá para ter valor variável, como a luz.' },
+      { alvo: () => { const c = $('#main .chips'); return c ? c.closest('section') : null; }, t: 'Lista do mês', x: 'Filtre por despesas, receitas ou o que está a pagar. Toque em um lançamento para editar, marcar como pago ou excluir.' },
+      { alvo: '#fab', t: 'Lançar', x: 'O + abre o formulário. No ?, “Como fazer um lançamento” mostra campo por campo.' },
+      fim(),
+    ];
+    if (aba === 'casal') return [
+      { t: 'Tour do Casal', x: 'Aqui ficam as despesas dos dois, como aluguel e mercado. Os dois veem e lançam; cada um só altera o que lançou.' },
+      ...PASSOS_TOPO,
+      { alvo: () => $('#main section'), t: 'Total e divisão', x: 'Total do mês e quanto cabe a cada um. A divisão padrão é proporcional à renda (dá para mudar nas Configurações).' },
+      { alvo: secTitulo('Acerto do mês'), t: 'Acerto', x: 'Quem pagou mais e quanto o outro deve transferir. Depois de transferir, marque como feito.' },
+      { alvo: secDe('[data-act=limites][data-esc=casal]'), t: 'Orçamento do casal', x: 'Limites por categoria para as despesas dos dois. Os dois veem e recebem os alertas.' },
+      { alvo: secDe('[data-act=fixa-nova][data-esc=casal]'), t: 'Contas fixas do casal', x: 'Aluguel, internet, luz… quem paga cadastra e o app lança todo mês no nome dessa pessoa.' },
+      { alvo: secTitulo('Lançamentos do casal'), t: 'Lançamentos', x: 'Cada item mostra quem pagou. Uma despesa pode ter divisão própria, como meio a meio ou “só eu”.' },
+      { alvo: '#fab', t: 'Lançar', x: 'O + aqui já abre o formulário em “Do casal”.' },
+      fim(),
+    ];
+    if (aba === 'metas') return [
+      { t: 'Tour de Metas', x: 'Metas são cofrinhos: a viagem, uma reserva, um carro. Você define valor e prazo e o app calcula quanto guardar por mês.' },
+      { alvo: () => $$('#main .sec-head')[0], t: 'Metas do casal', x: 'Os dois veem e guardam. A sugestão de quanto cada um guarda segue a mesma divisão do casal.' },
+      { alvo: '.meta-card .ring-wrap', t: 'Progresso', x: 'Quanto já foi guardado, quanto falta e a porcentagem da meta.' },
+      { alvo: () => { const s = $('.meta-card .settle'); return s; }, t: 'Quanto por mês', x: 'Quanto precisam guardar por mês para chegar no prazo, e a parte de cada um.' },
+      { alvo: () => { const b = $('.meta-card [data-act=mov-novo]'); return b ? b.closest('.btn-row') : null; }, t: 'Guardar e retirar', x: 'Toque em Guardar quando separar o dinheiro. Se precisar usar, registre uma retirada.' },
+      { alvo: () => $$('#main .sec-head')[1], t: 'Minhas metas', x: 'Metas só suas. A outra pessoa não vê os detalhes, só o total guardado no mês.' },
+      fim(),
+    ];
+    if (aba === 'evolucao') return [
+      { t: 'Tour da Evolução', x: 'Aqui você acompanha os números ao longo do tempo: o que passou, o que vem pela frente e o ano inteiro.', acao: modoEvo('hist') },
+      { alvo: '.seg-tabs', acao: modoEvo('hist'), t: 'Três visões', x: 'Histórico (meses que passaram), Previsão (próximos 12 meses) e Ano (categorias × meses, como uma planilha).' },
+      { alvo: '.evo-ctrl', acao: modoEvo('hist'), t: 'De quem e período', x: 'Veja o casal, só você ou a outra pessoa (só totais), em 6 ou 12 meses.' },
+      { alvo: 'svg.chart', acao: modoEvo('hist'), t: 'Gráfico', x: 'Colunas de renda e gastos e a linha da sobra. Toque em um mês para ver os valores abaixo.' },
+      { alvo: secTitulo('Mês a mês'), acao: modoEvo('hist'), t: 'Tabela', x: 'Os mesmos números em tabela, mês a mês.' },
+      { alvo: '.seg-tabs', acao: modoEvo('prev'), t: 'Previsão', x: 'Soma contas fixas, parcelas, faturas e a média do dia a dia para mostrar como devem ficar os próximos meses.' },
+      { alvo: () => $('#main .tbl-wrap'), acao: modoEvo('prev'), t: 'Renda prevista', x: 'Toque na renda de um mês para ajustar quanto espera receber. Assim a previsão fica mais certa.' },
+      { alvo: '.seg-tabs', acao: modoEvo('ano'), t: 'Ano', x: 'Cada categoria em cada mês, com total e média, igual à planilha de controle.' },
+      fim(),
+    ];
+    if (aba === 'busca') return [
+      { alvo: '#busca-q', t: 'Buscar', x: 'Digite parte da descrição, o nome da categoria ou o valor (ex.: 230).' },
+      { alvo: '.busca-f', t: 'Filtros', x: 'Onde procurar (meus, casal), período, situação, tipo, categoria e forma de pagamento ou cartão.' },
+      { alvo: '#busca-res', t: 'Resultados', x: 'Agrupados por mês, com os totais. Toque em um item para abrir.' },
+      fim(),
+    ];
+    return [];
+  }
+
+  function tourLancamento(src) {
+    const abrir = () => formLanc(src || 'meu');
+    const g = garantir('#f-lanc', abrir);
+    return [
+      { t: 'Como fazer um lançamento', x: 'Vou abrir o formulário e explicar cada campo. Nada é salvo durante o tour.', acao: fecharSe },
+      { alvo: '#fab', acao: fecharSe, t: 'Botão +', x: 'É por aqui que você começa um lançamento, em qualquer aba.' },
+      { alvo: () => { const r = $('#f-lanc input[name=dest]'); return r ? r.closest('.field') : null; }, acao: g, t: 'Para quem é', x: '“Só meu” fica privado. “Do casal” entra na divisão entre vocês e os dois veem.' },
+      src === 'conj' ? null : { alvo: '#w-tipo', acao: g, t: 'Tipo', x: 'Despesa para gastos, Receita para salário e outras entradas.' },
+      { alvo: campo('#f-valor'), acao: g, t: 'Valor', x: 'Digite só o número, como 230,50.' },
+      { alvo: campo('#f-desc'), acao: g, t: 'Descrição', x: 'O que foi. Ajuda a achar depois na busca.' },
+      { alvo: campo('#f-cats'), acao: g, t: 'Categoria', x: 'Toque na categoria. É ela que conta nos limites, nos alertas e nos relatórios.' },
+      { alvo: '#w-pag', acao: g, t: 'Forma de pagamento', x: 'Pix, débito, dinheiro… Se escolher um cartão, a compra vai para a fatura certa sozinha.' },
+      { alvo: campo('#f-data'), acao: g, t: 'Data', x: 'Define em qual mês o lançamento entra.' },
+      { alvo: '#w-status', acao: g, t: 'Situação', x: 'Pago ou a pagar. O que está a pagar aparece nos Vencimentos do Painel.' },
+      src === 'conj' && casal().length === 2 ? { alvo: '#w-div', acao: g, t: 'Divisão', x: 'Normalmente segue a divisão do casal. Dá para escolher meio a meio, “só eu” ou “só a outra pessoa” só nesta despesa.' } : null,
+      { alvo: () => { const r = $('#f-lanc input[name=rep]'); return r ? r.closest('.field') : null; }, acao: g, t: 'Repetir', x: 'Única, parcelada (divide o total nas parcelas) ou conta fixa (o app lança todo mês).' },
+      { alvo: '#f-lanc button[type=submit]', acao: g, t: 'Salvar', x: 'Confere e toca aqui. Pronto! Agora feche o tour e faça o seu primeiro lançamento.' },
+    ].filter(Boolean);
+  }
+  function tourRapido() {
+    const g = garantir('#rp-texto', () => formRapido(false));
+    const exemplo = () => { g(); const t = $('#rp-texto'); if (t && !t.value) t.value = 'mercado 230 casal\nuber 25 ontem e ifood 48,90 no pix'; };
+    const interpretar = () => { exemplo(); if (!$('#rp-lista .rd-wrap') && $('#rp-ler')) $('#rp-ler').click(); };
+    return [
+      { t: 'Lançamento rápido', x: 'Em vez de preencher campo por campo, você escreve ou fala uma frase e o app entende.', acao: fecharSe },
+      { alvo: '#rp-texto', acao: exemplo, t: 'Escreva como falaria', x: 'Ex.: “mercado 230 casal”, “uber 25 ontem e ifood 48,90 no pix”, “tênis 600 em 3x no cartão”. Separe vários com “e”, vírgula ou linha nova.' },
+      window.SpeechRecognition || window.webkitSpeechRecognition ? { alvo: '#rp-mic', acao: g, t: 'Falar', x: 'Toque em Falar e diga os lançamentos. Se não funcionar no seu celular, use o microfone do próprio teclado.' } : { alvo: '#rp-texto', acao: g, t: 'Ditar', x: 'Para falar em vez de digitar, toque no microfone do teclado do celular.' },
+      { alvo: '#rp-ler', acao: exemplo, t: 'Interpretar', x: 'Depois de escrever, toque aqui. O app separa cada lançamento que entendeu.' },
+      { alvo: '#rp-lista', acao: interpretar, t: 'Conferir e lançar', x: 'Veja o exemplo: valor, categoria, data, se é do casal e a forma de pagamento. Se algo saiu errado, toque em Editar. “Lançar” salva todos de uma vez (o tour não salva).' },
+    ].filter(Boolean);
+  }
+  function tourFixa(escopo) {
+    const g = garantir('#f-fixa', () => formFixa(escopo));
+    return [
+      { t: 'Como cadastrar uma conta fixa', x: 'Conta fixa é o que se repete todo mês. Você cadastra uma vez e o app lança sozinho.', acao: fecharSe },
+      { alvo: campo('#x-valor'), acao: g, t: 'Valor', x: 'O valor de todo mês. Se muda (como luz e água), marque “valor variável”: o app lança uma estimativa e você confirma quando chegar a conta.' },
+      { alvo: campo('#x-desc'), acao: g, t: 'Descrição e categoria', x: 'Nome da conta, como “Internet” ou “Academia”, e a categoria logo abaixo.' },
+      { alvo: campo('#x-dia'), acao: g, t: 'Dia do vencimento', x: 'Dia em que vence todo mês. Aparece nos Vencimentos do Painel.' },
+      { alvo: campo('#x-fmes'), acao: g, t: 'Termina em', x: 'Opcional: para contas com fim, como um financiamento. Deixe em branco se não tiver fim.' },
+      { alvo: '#f-fixa button[type=submit]', acao: g, t: 'Salvar', x: 'O app cria os lançamentos até o mês que vem e segue lançando todo mês.' },
+    ];
+  }
+  function tourMeta() {
+    const g = garantir('#f-meta', () => formMeta('casal'));
+    return [
+      { t: 'Como criar uma meta', x: 'Uma meta é um cofrinho com valor e prazo.', acao: fecharSe },
+      { alvo: campo('#mt-nome'), acao: g, t: 'Nome e ícone', x: 'Ex.: “Reserva de emergência”, “Carro”. Escolha um ícone para achar fácil.' },
+      { alvo: campo('#mt-valor'), acao: g, t: 'Valor', x: 'Quanto vocês querem juntar no total.' },
+      { alvo: campo('#mt-mes'), acao: g, t: 'Prazo', x: 'Até quando. Com o prazo, o app calcula quanto guardar por mês e a parte de cada um.' },
+      { alvo: '#f-meta button[type=submit]', acao: g, t: 'Criar', x: 'Depois é só tocar em “Guardar” na meta sempre que separar dinheiro.' },
+    ];
+  }
+
+  function formTour() {
+    const aba = S.aba;
+    const ops = [['aba', '🧭', 'Conhecer a aba ' + NOME_ABA[aba], 'O que é cada parte da tela']];
+    if (S.canWrite !== false) {
+      if (aba === 'casal') ops.push(['lanc-casal', '➕', 'Como lançar uma despesa do casal', 'Campo por campo, sem salvar nada']);
+      else ops.push(['lanc', '➕', 'Como fazer um lançamento', 'Campo por campo, sem salvar nada']);
+      ops.push(['rapido', '⚡', 'Lançamento rápido por texto ou voz', 'Uma frase vira vários lançamentos']);
+      if (aba === 'meus' || aba === 'casal') ops.push(['fixa', '🔁', 'Como cadastrar uma conta fixa', 'Aluguel, internet, assinaturas…']);
+      if (aba === 'metas') ops.push(['meta', '🎯', 'Como criar uma meta', 'Valor, prazo e quanto guardar por mês']);
+    }
+    abrirModal('Tour guiado', '<div class="tour-menu">' + ops.map(([k, ico, t, s]) => '<button type="button" class="tour-op" data-tour="' + k + '"><span class="ico">' + ico + '</span><span><strong>' + esc(t) + '</strong><span class="sub">' + esc(s) + '</span></span><span class="chev">›</span></button>').join('') + '</div>', (el) => {
+      $('.tour-menu', el).addEventListener('click', (e) => {
+        const b = e.target.closest('[data-tour]'); if (!b) return;
+        const k = b.dataset.tour;
+        fecharModal();
+        const passos = k === 'aba' ? tourAba(aba) : k === 'lanc' ? tourLancamento('meu') : k === 'lanc-casal' ? tourLancamento('conj') : k === 'rapido' ? tourRapido() : k === 'fixa' ? tourFixa(aba === 'casal' ? 'casal' : 'meu') : tourMeta();
+        iniciarTour(passos, k === 'aba' ? null : fecharSe);
+      });
+    });
+  }
+
+  let TOUR = null;
+  function iniciarTour(passos, aoSair) {
+    lsSet('tour-ok', '1');
+    $$('.tour-pulso').forEach((x) => x.classList.remove('tour-pulso'));
+    const modoEvo = S.evoModo;
+    passos = passos.filter((p) => p.acao || !p.alvo || alvoTour(p));
+    TOUR = { passos, i: -1, dir: 1, aoSair: () => { if (aoSair) aoSair(); if (S.aba === 'evolucao' && S.evoModo !== modoEvo) { S.evoModo = modoEvo; render(); } } };
+    let root = $('#tour');
+    if (!root) {
+      root = document.createElement('div'); root.id = 'tour';
+      root.innerHTML = '<div class="tour-spot" hidden></div><div class="tour-card" role="dialog" aria-live="polite"></div>';
+      document.body.appendChild(root);
+      root.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-tour-act]'); if (!b) return;
+        const a = b.dataset.tourAct;
+        if (a === 'prox') irPasso(TOUR.i + 1, 1); else if (a === 'volta') irPasso(TOUR.i - 1, -1); else sairTour();
+      });
+      window.addEventListener('resize', posTour);
+      window.addEventListener('scroll', posTour, true);
+      document.addEventListener('keydown', (e) => {
+        if (!TOUR) return;
+        if (e.key === 'Escape') { e.stopImmediatePropagation(); sairTour(); }
+        else if (e.key === 'ArrowRight') irPasso(TOUR.i + 1, 1);
+        else if (e.key === 'ArrowLeft') irPasso(TOUR.i - 1, -1);
+      }, true);
+    }
+    root.hidden = false;
+    document.body.classList.add('em-tour');
+    irPasso(0, 1);
+  }
+  function alvoTour(p) {
+    if (!p || !p.alvo) return null;
+    let el = null;
+    if (typeof p.alvo === 'function') el = p.alvo();
+    else el = p.alvo.split(',').map((s) => $(s.trim())).find(Boolean) || null;
+    if (!el || !el.getClientRects().length) return null;
+    return el;
+  }
+  async function irPasso(i, dir) {
+    if (!TOUR) return;
+    if (i < 0) return;
+    if (i >= TOUR.passos.length) return sairTour();
+    const tok = (TOUR.tok = (TOUR.tok || 0) + 1);
+    const p = TOUR.passos[i];
+    if (p.acao) { p.acao(); await espera(360); }
+    if (!TOUR || TOUR.tok !== tok) return;
+    const el = alvoTour(p);
+    if (p.alvo && !el) return irPasso(i + dir, dir);
+    TOUR.i = i; TOUR.dir = dir;
+    if (el) {
+      const r = el.getBoundingClientRect();
+      const vh = window.innerHeight;
+      if (r.top < 70 || r.bottom > vh - 200) { el.scrollIntoView({ block: r.height > vh * 0.5 ? 'start' : 'center', behavior: 'smooth' }); await espera(380); }
+    }
+    if (!TOUR || TOUR.tok !== tok) return;
+    desenharTour();
+  }
+  function desenharTour() {
+    const card = $('#tour .tour-card');
+    const vis = TOUR.passos;
+    const n = vis.length, i = TOUR.i;
+    const p = vis[i];
+    card.innerHTML = '<div class="tour-top"><span class="eyebrow">Tour guiado · ' + (i + 1) + ' de ' + n + '</span><button class="link" type="button" data-tour-act="sair">Sair</button></div>' +
+      '<h3>' + esc(p.t) + '</h3><p>' + esc(p.x) + '</p>' +
+      '<div class="tour-prog"><i style="width:' + ((i + 1) / n * 100).toFixed(1) + '%"></i></div>' +
+      '<div class="tour-btns">' + (i > 0 ? '<button class="btn ghost" type="button" data-tour-act="volta">Voltar</button>' : '<span></span>') +
+      '<button class="btn" type="button" data-tour-act="prox">' + (i === n - 1 ? 'Concluir' : 'Próximo') + '</button></div>';
+    posTour();
+    const b = card.querySelector('[data-tour-act=prox]'); if (b) b.focus({ preventScroll: true });
+  }
+  function posTour() {
+    if (!TOUR || TOUR.i < 0) return;
+    const spot = $('#tour .tour-spot'), card = $('#tour .tour-card');
+    const el = alvoTour(TOUR.passos[TOUR.i]);
+    const vw = window.innerWidth, vh = window.innerHeight, m = 12;
+    const w = Math.min(380, vw - 2 * m);
+    card.style.width = w + 'px';
+    const ch = card.offsetHeight;
+    $('#tour').classList.toggle('sem-alvo', !el);
+    if (!el) {
+      spot.hidden = true;
+      card.classList.add('centro');
+      card.style.left = (vw - w) / 2 + 'px'; card.style.top = Math.max(m, (vh - ch) / 2) + 'px';
+      return;
+    }
+    card.classList.remove('centro');
+    const r = el.getBoundingClientRect();
+    const pad = 6;
+    const top = Math.max(4, r.top - pad), bottom = Math.min(vh - 4, r.bottom + pad);
+    spot.hidden = false;
+    Object.assign(spot.style, { left: Math.max(4, r.left - pad) + 'px', top: top + 'px', width: Math.min(vw - 8, r.width + 2 * pad) + 'px', height: Math.max(0, bottom - top) + 'px' });
+    let y;
+    if (vh - bottom >= ch + m) y = bottom + 10;
+    else if (top >= ch + m) y = top - ch - 10;
+    else y = vh - ch - m - 8;
+    const x = Math.min(vw - w - m, Math.max(m, r.left + r.width / 2 - w / 2));
+    card.style.left = x + 'px'; card.style.top = Math.max(m, y) + 'px';
+  }
+  function sairTour() {
+    if (!TOUR) return;
+    const t = TOUR; TOUR = null;
+    const root = $('#tour'); if (root) root.hidden = true;
+    document.body.classList.remove('em-tour');
+    try { t.aoSair(); } catch (e) { /* ignora */ }
+  }
+
   /* ---------- eventos ---------- */
   document.addEventListener('click', async (e) => {
     const el = e.target.closest('[data-act]');
@@ -2303,6 +2567,7 @@ import { DB, Conta } from './firebase-shim.js';
     else if (act === 'meta-nova') formMeta(el.dataset.esc);
     else if (act === 'meta-editar') { const mt = acharMeta(el.dataset.id, el.dataset.esc); if (mt) formMeta(el.dataset.esc, mt); }
     else if (act === 'rapido') formRapido(false);
+    else if (act === 'tour') formTour();
     else if (act === 'importar') formImportar();
     else if (act === 'exportar') formExportar();
     else if (act === 'busca-limpar') { S.busca = { q: '', onde: 'tudo', periodo: '12', status: 'todas', tipo: 'todos', cat: '', pag: '' }; $('#main').innerHTML = ''; render(); }
