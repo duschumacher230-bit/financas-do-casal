@@ -100,3 +100,24 @@ assert.strictEqual(ev[0].gastos, 999);
 const evE = F.evolucao(['2026-11'], [E, C], resumos, conj, movs, {}, 'e');
 assert.deepStrictEqual(evE[0], { mes: '2026-11', renda: 6000, gastos: 1800 + 900, guardado: 700, sobra: 6000 - 2700 - 700 });
 console.log('OK — todos os testes passaram');
+
+// divisão por lançamento: Eduardo pagou 300 "só Camila" e 100 meio a meio; Camila pagou 200 padrão (60/40)
+const cj2 = F.conjuntoMes([
+  { autor: 'e', valor: 300, mes: '2026-12', divisao: 'so_outro' },
+  { autor: 'e', valor: 100, mes: '2026-12', divisao: 'igual' },
+  { autor: 'c', valor: 200, mes: '2026-12' },
+  { autor: 'c', valor: 50, mes: '2026-12', divisao: 'so_autor' },
+], '2026-12', ['e', 'c'], { e: 0.6, c: 0.4 });
+assert.strictEqual(cj2.parte.e, 0 + 50 + 120 + 0);
+assert.strictEqual(cj2.parte.c, 650 - 170);
+assert.deepStrictEqual(cj2.acerto, { de: 'c', para: 'e', valor: 400 - 170 });
+
+// cartões
+assert.strictEqual(F.mesFatura('2026-11-02', 3, 10), '2026-11');
+assert.strictEqual(F.mesFatura('2026-11-03', 3, 10), '2026-12');
+assert.strictEqual(F.mesFatura('2026-11-10', 28, 5), '2026-12');
+assert.strictEqual(F.mesFatura('2026-11-29', 28, 5), '2027-01');
+assert.strictEqual(F.mesFatura('2026-12-20', 15, 22), '2027-01');
+assert.strictEqual(F.vencFatura('2027-02', 30), '2027-02-28');
+assert.strictEqual(F.normalizar('  Ágüa Énergia '), 'agua energia');
+console.log('OK — testes da entrega 1');

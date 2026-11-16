@@ -24,19 +24,96 @@ import { DB, Conta } from './firebase-shim.js';
   }
   function dataCurta(iso) { const [y, m, d] = iso.split('-'); return d + '/' + m + '/' + y; }
 
-  const CAT_DESP = [
-    ['mercado', '🛒', 'Mercado'], ['moradia', '🏠', 'Moradia'], ['contas', '💡', 'Contas da casa'],
-    ['alimentacao', '🍽️', 'Restaurante e delivery'], ['transporte', '⛽', 'Transporte'], ['saude', '💊', 'Saúde'],
-    ['lazer', '🎉', 'Lazer'], ['compras', '🛍️', 'Compras'], ['assinaturas', '📺', 'Assinaturas'],
-    ['educacao', '📚', 'Educação'], ['cuidados', '💇', 'Cuidados pessoais'], ['pets', '🐾', 'Pets'],
-    ['presentes', '🎁', 'Presentes'], ['viagem', '✈️', 'Viagem'], ['cartao', '💳', 'Cartão e parcelas'], ['outros', '📦', 'Outros'],
-  ];
-  const CAT_REC = [
-    ['salario', '💼', 'Salário'], ['prolabore', '🏢', 'Pró-labore'], ['comissao', '📈', 'Comissão'],
-    ['extra', '✨', 'Renda extra'], ['rendimentos', '🏦', 'Rendimentos'], ['outros_r', '📦', 'Outras receitas'],
-  ];
-  const CATS = {}; CAT_DESP.concat(CAT_REC).forEach(([k, i, n]) => { CATS[k] = { ico: i, nome: n }; });
-  const cat = (k) => CATS[k] || CATS.outros;
+  /* ---------- categorias (catálogo compartilhado, com grupos) ---------- */
+  const CATALOGO_PADRAO = {
+    grupos: [
+      { id: 'moradia', nome: 'Moradia' }, { id: 'alimentacao', nome: 'Alimentação' }, { id: 'veiculo', nome: 'Veículo e transporte' },
+      { id: 'saude', nome: 'Saúde e bem-estar' }, { id: 'lazer', nome: 'Lazer e compras' }, { id: 'servicos', nome: 'Assinaturas e educação' },
+      { id: 'outros', nome: 'Outros' }, { id: 'receitas', nome: 'Receitas' },
+    ],
+    cats: [
+      ['moradia', '🏠', 'Aluguel / financiamento', 'moradia'], ['agua', '💧', 'Água', 'moradia'], ['energia', '💡', 'Energia', 'moradia'],
+      ['internet', '📶', 'Internet / telefone', 'moradia'], ['diarista', '🧹', 'Diarista', 'moradia'], ['gas', '🔥', 'Gás', 'moradia'],
+      ['iptu', '🏛️', 'IPTU', 'moradia'], ['contas', '🧾', 'Outras contas da casa', 'moradia'],
+      ['mercado', '🛒', 'Mercado', 'alimentacao'], ['alimentacao', '🍽️', 'Restaurante e delivery', 'alimentacao'],
+      ['transporte', '⛽', 'Combustível e transporte', 'veiculo'], ['seguro_carro', '🛡️', 'Seguro do veículo', 'veiculo'],
+      ['ipva', '📄', 'IPVA / licenciamento', 'veiculo'], ['manutencao', '🔧', 'Manutenção do veículo', 'veiculo'],
+      ['saude', '💊', 'Saúde', 'saude'], ['academia', '🏋️', 'Academia', 'saude'], ['esportes', '🥊', 'Esportes / lutas', 'saude'],
+      ['cuidados', '💇', 'Cuidados pessoais', 'saude'],
+      ['lazer', '🎉', 'Lazer', 'lazer'], ['compras', '🛍️', 'Compras', 'lazer'], ['presentes', '🎁', 'Presentes', 'lazer'],
+      ['viagem', '✈️', 'Viagem', 'lazer'], ['pets', '🐾', 'Pets', 'lazer'],
+      ['assinaturas', '📺', 'Assinaturas', 'servicos'], ['educacao', '📚', 'Educação', 'servicos'],
+      ['cartao', '💳', 'Fatura de cartão (total)', 'outros'], ['outros', '📦', 'Outros', 'outros'],
+      ['salario', '💼', 'Salário', 'receitas'], ['prolabore', '🏢', 'Pró-labore', 'receitas'], ['comissao', '📈', 'Comissão', 'receitas'],
+      ['extra', '✨', 'Renda extra', 'receitas'], ['rendimentos', '🏦', 'Rendimentos', 'receitas'], ['outros_r', '📦', 'Outras receitas', 'receitas'],
+    ].map(([id, ico, nome, grupo]) => ({ id, ico, nome, grupo })),
+  };
+  let CAT_MAP = {};
+  function catalogo() {
+    const c = S.catalogo;
+    if (!c || !Array.isArray(c.grupos) || !Array.isArray(c.cats) || !c.cats.length) return CATALOGO_PADRAO;
+    const grupos = c.grupos.some((g) => g.id === 'receitas') ? c.grupos : c.grupos.concat([{ id: 'receitas', nome: 'Receitas' }]);
+    return { grupos, cats: c.cats };
+  }
+  function reindexarCats() {
+    CAT_MAP = {};
+    CATALOGO_PADRAO.cats.forEach((c) => { CAT_MAP[c.id] = c; });
+    catalogo().cats.forEach((c) => { CAT_MAP[c.id] = c; });
+  }
+  const cat = (k) => CAT_MAP[k] || { id: k, ico: '📦', nome: 'Outros', grupo: 'outros' };
+  function gruposDe(tipo) {
+    const cg = catalogo();
+    return cg.grupos
+      .filter((g) => (tipo === 'receita' ? g.id === 'receitas' : g.id !== 'receitas'))
+      .map((g) => ({ g, cats: cg.cats.filter((c) => c.grupo === g.id && !c.oculta) }))
+      .filter((x) => x.cats.length);
+  }
+  const catsLista = (tipo) => gruposDe(tipo).flatMap((x) => x.cats);
+  function catChips(tipo, sel) {
+    return '<div class="catbox">' + gruposDe(tipo).map(({ g, cats }) => '<div class="cg"><div class="cg-nome">' + esc(g.nome) + '</div><div class="catpick">' +
+      cats.map((c) => '<button type="button" data-cat="' + esc(c.id) + '" aria-pressed="' + (c.id === sel) + '">' + c.ico + ' ' + esc(c.nome) + '</button>').join('') + '</div></div>').join('') + '</div>';
+  }
+  function ligarCatChips(box, st, onChange) {
+    box.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-cat]'); if (!b) return;
+      st.cat = b.dataset.cat;
+      $$('button[data-cat]', box).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      if (onChange) onChange();
+    });
+  }
+
+  /* ---------- formas de pagamento e cartões ---------- */
+  const PAGS = [['pix', 'Pix'], ['debito', 'Débito'], ['dinheiro', 'Dinheiro'], ['boleto', 'Boleto']];
+  const cartaoDe = (id) => S.cartoes.find((c) => c.id === id) || null;
+  function opcoesPag(pag, cartaoId) {
+    const v = pag === 'cartao' && cartaoId ? 'c:' + cartaoId : (pag || 'pix');
+    return PAGS.map(([k, n]) => '<option value="' + k + '"' + (v === k ? ' selected' : '') + '>' + n + '</option>').join('') +
+      (S.cartoes.length ? '<optgroup label="Cartão de crédito">' + S.cartoes.map((c) => '<option value="c:' + esc(c.id) + '"' + (v === 'c:' + c.id ? ' selected' : '') + '>💳 ' + esc(c.nome) + '</option>').join('') + '</optgroup>' : '') +
+      '<option value="novo-cartao">+ Cadastrar cartão…</option>';
+  }
+  function lerPag(valor) {
+    if (valor && valor.startsWith('c:')) return { pag: 'cartao', cartaoId: valor.slice(2) };
+    return { pag: valor || 'pix', cartaoId: null };
+  }
+  /* Ajusta mês/data de um lançamento pago no cartão: "data" vira o vencimento da fatura */
+  function noCartao(doc, dataCompra, cartaoId, deslocamento) {
+    const c = cartaoDe(cartaoId);
+    if (!c) return Object.assign(doc, { pag: 'pix', cartaoId: null, dataCompra: null });
+    const mesF = FL.addMeses(FL.mesFatura(dataCompra, c.fechamento, c.vencimento), deslocamento || 0);
+    return Object.assign(doc, { pag: 'cartao', cartaoId: c.id, dataCompra, mes: mesF, data: FL.vencFatura(mesF, c.vencimento) });
+  }
+  const DIVS = () => {
+    const par = parceiro();
+    return [['padrao', 'Padrão do casal (' + (S.cfgCasal.modo === 'igual' ? 'meio a meio' : S.cfgCasal.modo === 'fixo' ? 'percentual fixo' : 'proporcional à renda') + ')'], ['igual', 'Meio a meio'], ['so_autor', 'Só eu (não divide)'], ['so_outro', 'Só ' + (par ? par.nome : 'a outra pessoa') + ' (me reembolsa)']];
+  };
+  function textoDivisao(l) {
+    if (!l.divisao || l.divisao === 'padrao') return '';
+    if (l.divisao === 'igual') return 'meio a meio';
+    const autor = pessoa(l.autor);
+    const outro = casal().map((x) => pessoa(x.id)).find((p) => p.id !== l.autor);
+    return l.divisao === 'so_autor' ? 'só ' + autor.nome : 'só ' + (outro ? outro.nome : 'o outro');
+  }
+
   const CORES = ['#2563eb', '#db2777', '#7c3aed', '#0d9488', '#ea580c', '#16a34a', '#0891b2', '#b45309'];
 
   const ICON = {
@@ -56,7 +133,7 @@ import { DB, Conta } from './firebase-shim.js';
     db: null, user: null, uid: null, email: '', authPronto: false, canWrite: true, fatal: null, timeout: false, err: null,
     mes: mesHoje(), aba: 'painel', filtro: 'tudo',
     meus: [], conj: [], cofre: [], membros: {}, resumos: {}, cfgCasal: {}, viagem: null, acertos: {},
-    fixas: [], fixasCasal: [], limites: {}, limitesCasal: {},
+    fixas: [], fixasCasal: [], limites: {}, limitesCasal: {}, cartoes: [], catalogo: null,
     evoQuem: 'casal', evoN: 6, evoSel: null,
     got: {}, firm: {},
   };
@@ -65,6 +142,7 @@ import { DB, Conta } from './firebase-shim.js';
   const ABAS = ['painel', 'meus', 'casal', 'viagem', 'evolucao'];
   const lerHash = () => { const h = (location.hash || '').slice(1); return ABAS.includes(h) ? h : 'painel'; };
   S.aba = lerHash();
+  reindexarCats();
 
   /* ---------- pessoas ---------- */
   function casal() {
@@ -209,22 +287,13 @@ import { DB, Conta } from './firebase-shim.js';
       '</section>';
 
     h += cardAlertas(m);
+    h += cardVencimentos();
 
     // Pessoas
     h += '<div class="people">' + ps.map((p) => cardPessoa(p, m)).join('') + '</div>';
 
     // Acerto
     if (m.I.length === 2 && m.conj.total > 0) h += cardAcerto(m, true);
-
-    // Contas a pagar (minhas)
-    const meusPend = m.meusMes.filter((l) => l.tipo !== 'receita' && l.status === 'pendente');
-    const conjPend = m.conj.itens.filter((l) => l.autor === S.uid && l.status === 'pendente');
-    const pend = meusPend.map((l) => ({ l, src: 'meu' })).concat(conjPend.map((l) => ({ l, src: 'conj' }))).sort((a, b) => a.l.data.localeCompare(b.l.data));
-    if (pend.length) {
-      h += '<section class="card"><div class="card-head"><h2>Suas contas a pagar</h2><span class="sub">' + pend.length + ' em ' + esc(MESES[+m.mes.slice(5) - 1]) + '</span></div><div class="list">' +
-        pend.slice(0, 6).map((x) => itemHTML(x.l, x.src, true)).join('') + '</div>' +
-        (pend.length > 6 ? '<button class="link" type="button" data-act="ir" data-tab="meus">Ver todas</button>' : '') + '</section>';
-    }
 
     // Viagem
     h += cardViagemMini(m);
@@ -308,17 +377,239 @@ import { DB, Conta } from './firebase-shim.js';
     const meu = src === 'meu' || l.autor === S.uid;
     const sub = [c.nome];
     if (l.parcela) sub.push(l.parcela);
+    if (l.pag === 'cartao') {
+      const k = meu ? cartaoDe(l.cartaoId) : null;
+      sub.push('💳 ' + (k ? k.nome : 'cartão') + (l.dataCompra ? ' · compra ' + dataCurta(l.dataCompra).slice(0, 5) : ''));
+    }
     if (autor) sub.push('pago por ' + autor.nome);
+    const dv = src === 'conj' ? textoDivisao(l) : '';
+    if (dv) sub.push(dv);
     if (mostrarData) sub.push(dataCurta(l.data).slice(0, 5));
     const receita = l.tipo === 'receita';
     const st = l.status === 'pendente' ? (receita ? 'A receber' : 'A pagar') : (receita ? 'Recebido' : 'Pago');
+    const cls = l.status === 'pendente' ? 'pendente' : 'pago';
     const pill = meu && S.canWrite !== false
-      ? '<span class="pill ' + (l.status === 'pendente' ? 'pendente' : 'pago') + '" role="button" tabindex="0" data-act="toggle-status" data-id="' + esc(l.id) + '" data-src="' + src + '" title="Tocar para alterar">' + st + '</span>'
-      : '<span class="pill ' + (l.status === 'pendente' ? 'pendente' : 'pago') + '">' + st + '</span>';
+      ? '<span class="pill ' + cls + '" role="button" tabindex="0" data-act="toggle-status" data-id="' + esc(l.id) + '" data-src="' + src + '" title="Tocar para alterar">' + st + '</span>'
+      : '<span class="pill ' + cls + '">' + st + '</span>';
+    const est = l.estimado && l.status === 'pendente';
     return '<div class="item" role="button" tabindex="0" data-act="abrir-lanc" data-id="' + esc(l.id) + '" data-src="' + src + '">' +
       '<span class="ico">' + c.ico + (autor ? '<span class="dot" style="background:' + esc(autor.cor) + '"></span>' : '') + '</span>' +
       '<div style="min-width:0"><div class="t">' + esc(l.desc) + '</div><div class="s">' + esc(sub.join(' · ')) + '</div></div>' +
-      '<span class="r"><span class="val ' + (receita ? 'pos' : '') + '">' + (receita ? '+' : '−') + ' ' + fmt(l.valor) + '</span>' + pill + '</span></div>';
+      '<span class="r"><span class="val ' + (receita ? 'pos' : '') + '">' + (receita ? '+' : '−') + ' ' + (est ? '≈ ' : '') + fmt(l.valor) + '</span>' + (est && meu && S.canWrite !== false ? '<span class="pill est" role="button" tabindex="0" data-act="toggle-status" data-id="' + esc(l.id) + '" data-src="' + src + '" title="Confirmar o valor real">estimado · confirmar</span>' : est ? '<span class="pill est">estimado</span>' : pill) + '</span></div>';
+  }
+
+  /* ---------- vencimentos ---------- */
+  function somaDias(iso, n) {
+    const [y, m, d] = iso.split('-').map(Number);
+    const dt = new Date(y, m - 1, d + n);
+    return dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate());
+  }
+  function rotuloVenc(iso) {
+    const hoje = hojeISO();
+    if (iso === hoje) return 'Hoje';
+    if (iso === somaDias(hoje, 1)) return 'Amanhã';
+    if (iso === somaDias(hoje, -1)) return 'Ontem';
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }).replace(/\./g, '');
+  }
+  function itensFatura(cartaoId, mes) {
+    return S.meus.filter((l) => l.cartaoId === cartaoId && l.mes === mes).map((l) => ({ l, src: 'meu' }))
+      .concat(S.conj.filter((l) => l.autor === S.uid && l.cartaoId === cartaoId && l.mes === mes).map((l) => ({ l, src: 'conj' })));
+  }
+  function resumoFatura(c, mes) {
+    const itens = itensFatura(c.id, mes);
+    const total = FL.r2(itens.reduce((t, x) => t + (x.l.tipo === 'receita' ? -x.l.valor : x.l.valor), 0));
+    const aberto = FL.r2(itens.filter((x) => x.l.status === 'pendente').reduce((t, x) => t + x.l.valor, 0));
+    return { c, mes, itens, total, aberto, venc: FL.vencFatura(mes, c.vencimento), paga: itens.length > 0 && aberto === 0 };
+  }
+  function vencimentos() {
+    const hoje = hojeISO();
+    const lim = somaDias(hoje, 7);
+    const out = [];
+    S.meus.filter((l) => l.tipo !== 'receita' && l.status === 'pendente' && l.pag !== 'cartao').forEach((l) => out.push({ k: 'l', l, src: 'meu', data: l.data, valor: l.valor, desc: l.desc, ico: cat(l.cat).ico }));
+    S.conj.filter((l) => l.autor === S.uid && l.status === 'pendente' && l.pag !== 'cartao').forEach((l) => out.push({ k: 'l', l, src: 'conj', data: l.data, valor: l.valor, desc: l.desc + ' (casal)', ico: cat(l.cat).ico }));
+    const vistos = new Set();
+    S.meus.concat(S.conj.filter((l) => l.autor === S.uid)).filter((l) => l.pag === 'cartao' && l.status === 'pendente' && cartaoDe(l.cartaoId)).forEach((l) => {
+      const key = l.cartaoId + '|' + l.mes;
+      if (vistos.has(key)) return;
+      vistos.add(key);
+      const f = resumoFatura(cartaoDe(l.cartaoId), l.mes);
+      out.push({ k: 'f', f, data: f.venc, valor: f.aberto, desc: 'Fatura ' + f.c.nome + ' · ' + mesCurto(f.mes), ico: '💳' });
+    });
+    out.sort((a, b) => a.data.localeCompare(b.data));
+    return { atrasadas: out.filter((x) => x.data < hoje), proximas: out.filter((x) => x.data >= hoje && x.data <= lim), depois: out.filter((x) => x.data > lim) };
+  }
+  function linhaVenc(x, atrasada) {
+    const pagar = x.k === 'f'
+      ? '<button class="pill pendente" type="button" data-act="fatura-pagar" data-id="' + esc(x.f.c.id) + '" data-mes="' + x.f.mes + '">Pagar</button>'
+      : '<button class="pill pendente" type="button" data-act="toggle-status" data-id="' + esc(x.l.id) + '" data-src="' + x.src + '">Pagar</button>';
+    const abrir = x.k === 'f' ? 'data-act="fatura-ver" data-id="' + esc(x.f.c.id) + '" data-mes="' + x.f.mes + '"' : 'data-act="abrir-lanc" data-id="' + esc(x.l.id) + '" data-src="' + x.src + '"';
+    return '<div class="venc" role="button" tabindex="0" ' + abrir + '><span class="vt"><b>' + x.ico + ' ' + esc(x.desc) + '</b><small class="vd' + (atrasada ? ' neg' : '') + '">' + esc(rotuloVenc(x.data)) + '</small></span>' +
+      '<span class="vv">' + (x.l && x.l.estimado ? '≈ ' : '') + fmt(x.valor) + '</span>' + pagar + '</div>';
+  }
+  function cardVencimentos() {
+    if (S.canWrite === false) return '';
+    const v = vencimentos();
+    if (!v.atrasadas.length && !v.proximas.length) {
+      const prox = v.depois[0];
+      return prox ? '<section class="card"><div class="card-head"><h2>Vencimentos</h2></div><p class="sub" style="margin:0">Nada vence nos próximos 7 dias. Próximo: ' + esc(prox.desc) + ' em ' + esc(dataCurta(prox.data).slice(0, 5)) + ' (' + fmt(prox.valor) + ').</p></section>' : '';
+    }
+    let h = '<section class="card"><div class="card-head"><h2>Vencimentos</h2><span class="sub">próximos 7 dias</span></div>';
+    if (v.atrasadas.length) h += '<div class="venc-g"><div class="tag neg" style="justify-self:start">▲ Atrasadas · ' + fmt(v.atrasadas.reduce((t, x) => t + x.valor, 0)) + '</div>' + v.atrasadas.slice(0, 8).map((x) => linhaVenc(x, true)).join('') + '</div>';
+    if (v.proximas.length) h += '<div class="venc-g">' + (v.atrasadas.length ? '<div class="cg-nome">Próximos 7 dias · ' + fmt(v.proximas.reduce((t, x) => t + x.valor, 0)) + '</div>' : '') + v.proximas.map((x) => linhaVenc(x, false)).join('') + '</div>';
+    return h + '</section>';
+  }
+
+  /* ---------- cartões de crédito ---------- */
+  function cardCartoes() {
+    let h = '<section class="card"><div class="card-head"><h2>Cartões de crédito</h2>' + (S.canWrite !== false ? '<button class="link" type="button" data-act="cartao-novo">+ Novo</button>' : '') + '</div>';
+    if (!S.cartoes.length) {
+      return h + '<p class="sub" style="margin:0">Cadastre seus cartões com o dia de fechamento e de vencimento. As compras no cartão caem sozinhas na fatura certa, inclusive as parceladas.</p></section>';
+    }
+    h += '<div class="rows">' + S.cartoes.map((c) => {
+      const f = resumoFatura(c, S.mes);
+      const prox = [1, 2, 3].map((i) => resumoFatura(c, FL.addMeses(S.mes, i)));
+      const tag = !f.itens.length ? '<span class="tag">Sem compras</span>' : f.paga ? '<span class="tag pos">✓ Paga</span>' : '<span class="tag warn">● Aberta</span>';
+      return '<div class="cartao" role="button" tabindex="0" data-act="fatura-ver" data-id="' + esc(c.id) + '" data-mes="' + S.mes + '">' +
+        '<div class="ct-top"><span class="nm">💳 ' + esc(c.nome) + '</span>' + tag + '</div>' +
+        '<div class="ct-val"><span class="amt">' + fmt(f.total) + '</span><span class="sub">fatura de ' + esc(MESES_C[+S.mes.slice(5) - 1]) + ' · vence ' + esc(dataCurta(f.venc).slice(0, 5)) + '</span></div>' +
+        '<div class="ct-prox">' + prox.map((p) => '<span>' + esc(MESES_C[+p.mes.slice(5) - 1]) + ' <b>' + fmt(p.total) + '</b></span>').join('') + '</div></div>';
+    }).join('') + '</div>';
+    return h + '</section>';
+  }
+
+  function verFatura(cartaoId, mes) {
+    const c = cartaoDe(cartaoId);
+    if (!c) return;
+    const f = resumoFatura(c, mes);
+    const corpo = '<div class="fat-nav"><button class="icon-btn" type="button" data-act="fatura-ver" data-id="' + esc(c.id) + '" data-mes="' + FL.addMeses(mes, -1) + '" aria-label="Fatura anterior">' + ICON.left + '</button>' +
+      '<div><div class="amt">' + fmt(f.total) + '</div><div class="sub">fatura de ' + esc(mesLongo(mes)) + ' · vence ' + esc(dataCurta(f.venc)) + '</div></div>' +
+      '<button class="icon-btn" type="button" data-act="fatura-ver" data-id="' + esc(c.id) + '" data-mes="' + FL.addMeses(mes, 1) + '" aria-label="Próxima fatura">' + ICON.right + '</button></div>' +
+      '<div class="sub">Fecha todo dia ' + c.fechamento + ' · vence todo dia ' + c.vencimento + '</div>' +
+      (f.itens.length ? '<div class="list">' + f.itens.sort((a, b) => (a.l.dataCompra || a.l.data).localeCompare(b.l.dataCompra || b.l.data)).map((x) => itemHTML(x.l, x.src)).join('') + '</div>' : '<div class="empty">Nenhuma compra nesta fatura.</div>') +
+      (f.itens.length ? (f.paga
+        ? '<button class="btn ghost" type="button" data-act="fatura-reabrir" data-id="' + esc(c.id) + '" data-mes="' + mes + '">Reabrir fatura (marcar como a pagar)</button>'
+        : '<button class="btn" type="button" data-act="fatura-pagar" data-id="' + esc(c.id) + '" data-mes="' + mes + '">Marcar fatura como paga · ' + fmt(f.aberto) + '</button>') : '') +
+      '<button class="btn ghost" type="button" data-act="cartao-editar" data-id="' + esc(c.id) + '">Editar cartão</button>';
+    abrirModal('💳 ' + c.nome, corpo);
+  }
+
+  async function pagarFatura(cartaoId, mes, status) {
+    const alvo = itensFatura(cartaoId, mes).filter((x) => x.l.status !== status);
+    let ok = true;
+    for (const x of alvo) {
+      if (!ok) break;
+      const ref = x.src === 'conj' ? S.db.doc('conjunto/' + x.l.id) : meusCol().doc(x.l.id);
+      ok = await escrever(() => ref.update({ status, estimado: false }));
+    }
+    if (ok) { agendarSync(); toast(status === 'pago' ? 'Fatura marcada como paga' : 'Fatura reaberta'); }
+    return ok;
+  }
+
+  function formCartao(item, depois) {
+    const corpo = '<form id="f-cartao" class="field" style="gap:14px" novalidate>' +
+      '<div class="field"><label for="k-nome">Nome do cartão</label><input class="input" id="k-nome" maxlength="30" placeholder="Ex.: Mercado Pago" value="' + esc(item ? item.nome : '') + '"></div>' +
+      '<div class="two"><div class="field"><label for="k-fech">Dia do fechamento</label><input class="input" type="number" id="k-fech" min="1" max="31" inputmode="numeric" value="' + (item ? item.fechamento : '') + '"></div>' +
+      '<div class="field"><label for="k-venc">Dia do vencimento</label><input class="input" type="number" id="k-venc" min="1" max="31" inputmode="numeric" value="' + (item ? item.vencimento : '') + '"></div></div>' +
+      '<div class="hint">Compras feitas a partir do dia do fechamento vão para a fatura seguinte. Só você vê seus cartões.</div>' +
+      '<div class="err" id="k-err" hidden></div><button class="btn block" type="submit">' + (item ? 'Salvar' : 'Cadastrar cartão') + '</button>' +
+      (item ? '<button class="btn danger" type="button" id="k-del">Excluir cartão</button>' : '') + '</form>';
+    abrirModal(item ? 'Editar cartão' : 'Novo cartão', corpo, (el) => {
+      $('#f-cartao', el).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const nome = $('#k-nome', el).value.trim();
+        const fech = Math.floor(Number($('#k-fech', el).value));
+        const venc = Math.floor(Number($('#k-venc', el).value));
+        const err = $('#k-err', el);
+        if (!nome) { err.hidden = false; err.textContent = 'Dê um nome ao cartão.'; return; }
+        if (!(fech >= 1 && fech <= 31 && venc >= 1 && venc <= 31)) { err.hidden = false; err.textContent = 'Os dias precisam ser de 1 a 31.'; return; }
+        const col = S.db.collection('usuarios/' + S.uid + '/cartoes');
+        const ref = item ? col.doc(item.id) : col.doc();
+        const ok = await escrever(() => (item ? ref.update({ nome, fechamento: fech, vencimento: venc }) : ref.set({ nome, fechamento: fech, vencimento: venc, criadoEm: Date.now() })), item ? 'Cartão atualizado' : 'Cartão cadastrado');
+        if (ok) { fecharModal(); if (depois) depois(ref.id); }
+      });
+      const d = $('#k-del', el);
+      if (d) d.addEventListener('click', async () => {
+        if (!d.dataset.armed) { d.dataset.armed = '1'; d.textContent = 'Toque de novo: os lançamentos continuam, sem o cartão'; return; }
+        d.disabled = true;
+        if (await escrever(() => S.db.doc('usuarios/' + S.uid + '/cartoes/' + item.id).delete(), 'Cartão excluído')) fecharModal();
+      });
+    });
+  }
+
+  function formConfirmarValor(l, src) {
+    const corpo = '<form id="f-conf" class="field" style="gap:14px" novalidate><p class="sub" style="margin:0">' + esc(l.desc) + ' muda de valor todo mês. Qual foi o valor de ' + esc(mesLongo(l.mes)) + '?</p>' +
+      '<div class="money-in"><span>R$</span><input id="cf-valor" inputmode="decimal" value="' + fmtInput(l.valor) + '"></div>' +
+      '<div class="err" id="cf-err" hidden></div><button class="btn block" type="submit">Confirmar e marcar como pago</button></form>';
+    abrirModal('Valor real da conta', corpo, (el) => {
+      const inp = $('#cf-valor', el); inp.select();
+      $('#f-conf', el).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const valor = FL.parseValor(inp.value);
+        if (!(valor > 0)) { const er = $('#cf-err', el); er.hidden = false; er.textContent = 'Informe o valor.'; return; }
+        const ref = src === 'conj' ? S.db.doc('conjunto/' + l.id) : meusCol().doc(l.id);
+        if (await escrever(() => ref.update({ valor, status: 'pago', estimado: false }), 'Valor confirmado')) { fecharModal(); agendarSync(); }
+      });
+    });
+  }
+
+  /* ---------- editor de categorias ---------- */
+  async function salvarCatalogo(cg, msg) {
+    return escrever(() => S.db.doc('config/categorias').set({ grupos: cg.grupos, cats: cg.cats, atualizadoEm: Date.now(), por: S.uid }), msg);
+  }
+  const clonarCatalogo = () => JSON.parse(JSON.stringify(catalogo()));
+  function formCategorias() {
+    const cg = catalogo();
+    const corpo = '<p class="sub" style="margin:0">As categorias valem para os dois. Toque numa categoria para renomear, trocar de grupo ou esconder.</p>' +
+      cg.grupos.map((g) => '<div class="cg"><div class="cg-head"><span class="cg-nome">' + esc(g.nome) + '</span>' + (g.id !== 'receitas' ? '<button class="link" type="button" data-act="grupo-editar" data-id="' + esc(g.id) + '">Renomear</button>' : '') + '</div><div class="catpick">' +
+        cg.cats.filter((c) => c.grupo === g.id).map((c) => '<button type="button" class="' + (c.oculta ? 'oculta' : '') + '" data-act="cat-editar" data-id="' + esc(c.id) + '">' + c.ico + ' ' + esc(c.nome) + '</button>').join('') + '</div></div>').join('') +
+      '<div class="btn-row"><button class="btn" type="button" data-act="cat-nova">+ Nova categoria</button><button class="btn ghost" type="button" data-act="grupo-novo">+ Novo grupo</button></div>';
+    abrirModal('Categorias', corpo);
+  }
+  const ICONES = ['🏠', '💧', '💡', '📶', '🧹', '🔥', '🧾', '🛒', '🍽️', '☕', '⛽', '🚗', '🛡️', '🔧', '🚌', '💊', '🏋️', '🥊', '⚽', '💇', '🎉', '🛍️', '👕', '🎁', '✈️', '🐾', '📺', '🎮', '📚', '🎓', '💳', '🏦', '💼', '📈', '✨', '👶', '⛪', '🧑‍🔧', '📦'];
+  function formCategoria(item) {
+    const cg = catalogo();
+    const st = { ico: item ? item.ico : '📦' };
+    const corpo = '<form id="f-cat" class="field" style="gap:14px" novalidate>' +
+      '<div class="field"><label for="ct-nome">Nome</label><input class="input" id="ct-nome" maxlength="30" value="' + esc(item ? item.nome : '') + '" placeholder="Ex.: Muay Thai"></div>' +
+      '<div class="field"><span>Ícone</span><div class="icones" id="ct-icos">' + ICONES.map((i) => '<button type="button" data-ico="' + i + '" aria-pressed="' + (i === st.ico) + '">' + i + '</button>').join('') + '</div></div>' +
+      '<div class="field"><label for="ct-grupo">Grupo</label><select class="input" id="ct-grupo">' + cg.grupos.map((g) => '<option value="' + esc(g.id) + '"' + ((item ? item.grupo : 'outros') === g.id ? ' selected' : '') + '>' + esc(g.nome) + '</option>').join('') + '</select></div>' +
+      (item ? '<label class="check"><input type="checkbox" id="ct-oculta"' + (item.oculta ? ' checked' : '') + '> Esconder esta categoria (os lançamentos antigos continuam)</label>' : '') +
+      '<div class="err" id="ct-err" hidden></div><button class="btn block" type="submit">' + (item ? 'Salvar' : 'Criar categoria') + '</button></form>';
+    abrirModal(item ? 'Editar categoria' : 'Nova categoria', corpo, (el) => {
+      $('#ct-icos', el).addEventListener('click', (e) => {
+        const b = e.target.closest('button[data-ico]'); if (!b) return;
+        st.ico = b.dataset.ico; $$('#ct-icos button', el).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      });
+      $('#f-cat', el).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const nome = $('#ct-nome', el).value.trim();
+        if (!nome) { const er = $('#ct-err', el); er.hidden = false; er.textContent = 'Dê um nome à categoria.'; return; }
+        const novo = clonarCatalogo();
+        const grupo = $('#ct-grupo', el).value;
+        if (item) {
+          const c = novo.cats.find((x) => x.id === item.id) || (novo.cats.push(Object.assign({}, item)), novo.cats[novo.cats.length - 1]);
+          Object.assign(c, { nome, ico: st.ico, grupo, oculta: !!($('#ct-oculta', el) && $('#ct-oculta', el).checked) });
+        } else {
+          novo.cats.push({ id: 'c_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), nome, ico: st.ico, grupo });
+        }
+        if (await salvarCatalogo(novo, item ? 'Categoria atualizada' : 'Categoria criada')) formCategorias();
+      });
+    });
+  }
+  function formGrupo(item) {
+    const corpo = '<form id="f-grp" class="field" style="gap:14px" novalidate><div class="field"><label for="g-nome">Nome do grupo</label><input class="input" id="g-nome" maxlength="30" value="' + esc(item ? item.nome : '') + '" placeholder="Ex.: Filhos"></div>' +
+      '<button class="btn block" type="submit">' + (item ? 'Salvar' : 'Criar grupo') + '</button></form>';
+    abrirModal(item ? 'Renomear grupo' : 'Novo grupo', corpo, (el) => {
+      $('#f-grp', el).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const nome = $('#g-nome', el).value.trim(); if (!nome) return;
+        const novo = clonarCatalogo();
+        if (item) novo.grupos.find((g) => g.id === item.id).nome = nome;
+        else novo.grupos.splice(novo.grupos.findIndex((g) => g.id === 'receitas'), 0, { id: 'g_' + Date.now().toString(36), nome });
+        if (await salvarCatalogo(novo, item ? 'Grupo renomeado' : 'Grupo criado')) formCategorias();
+      });
+    });
   }
 
   function listaPorDia(itens, src) {
@@ -353,6 +644,7 @@ import { DB, Conta } from './firebase-shim.js';
 
     const despCat = FL.porCategoria(meus, (l) => l.tipo !== 'receita');
     h += cardOrcamento(m.orcMeu, 'meu');
+    h += cardCartoes();
     h += cardFixas('meu');
 
     const filtros = [['tudo', 'Tudo'], ['despesa', 'Despesas'], ['receita', 'Receitas'], ['pendente', 'A pagar/receber']];
@@ -528,66 +820,96 @@ import { DB, Conta } from './firebase-shim.js';
   }
 
   /* ---------- formulário de lançamento ---------- */
-  function formLanc(src, item) {
+  function formLanc(src, item, rascunho) {
     const editar = !!item;
     if (editar && src === 'conj' && item.autor !== S.uid) return verLancOutro(item);
+    const base = item || rascunho || {};
     const st = {
-      destino: src === 'conj' ? 'casal' : 'pessoal',
-      tipo: (item && item.tipo) || 'despesa',
-      cat: (item && item.cat) || 'mercado',
+      destino: src === 'conj' ? 'casal' : (base.destino || 'pessoal'),
+      tipo: base.tipo || 'despesa',
+      cat: base.cat || 'mercado',
     };
+    const ehCartao = base.pag === 'cartao' && cartaoDe(base.cartaoId);
+    const dataIni = editar ? (item.dataCompra || item.data) : (base.data || dataPadrao());
+    const travaData = editar && item.pag === 'cartao' && item.parcela;
     const corpo = '<form id="f-lanc" class="field" style="gap:14px" novalidate>' +
       (editar ? '' : '<div class="field"><span>Para quem é</span>' + seg('dest', [['pessoal', 'Só meu (privado)'], ['casal', 'Do casal']], st.destino) + '</div>') +
       '<div class="field" id="w-tipo"' + (st.destino === 'casal' ? ' hidden' : '') + '><span>Tipo</span>' + seg('tipo', [['despesa', 'Despesa'], ['receita', 'Receita']], st.tipo) + '</div>' +
-      '<div class="field"><label for="f-valor" id="l-valor">Valor</label><div class="money-in"><span>R$</span><input id="f-valor" inputmode="decimal" autocomplete="off" placeholder="0,00" value="' + (item ? fmtInput(item.valor) : '') + '"></div></div>' +
-      '<div class="field"><label for="f-desc">Descrição</label><input class="input" id="f-desc" maxlength="60" placeholder="Ex.: Mercado do mês" value="' + esc(item ? item.desc : '') + '"></div>' +
-      '<div class="field"><span>Categoria</span><div class="catpick" id="f-cats"></div></div>' +
-      '<div class="two"><div class="field"><label for="f-data">Data</label><input class="input" type="date" id="f-data" value="' + esc(item ? item.data : dataPadrao()) + '"></div>' +
-      '<div class="field"><label for="f-status">Situação</label><select class="input" id="f-status"></select></div></div>' +
+      '<div class="field"><label for="f-valor" id="l-valor">Valor</label><div class="money-in"><span>R$</span><input id="f-valor" inputmode="decimal" autocomplete="off" placeholder="0,00" value="' + (base.valor ? fmtInput(base.valor) : '') + '"></div></div>' +
+      '<div class="field"><label for="f-desc">Descrição</label><input class="input" id="f-desc" maxlength="60" placeholder="Ex.: Mercado do mês" value="' + esc(base.desc || '') + '"></div>' +
+      '<div class="field"><span>Categoria</span><div id="f-cats"></div></div>' +
+      '<div class="field" id="w-pag"><label for="f-pag">Forma de pagamento</label><select class="input" id="f-pag">' + opcoesPag(base.pag, base.cartaoId) + '</select></div>' +
+      '<div class="two"><div class="field"><label for="f-data" id="l-data">Data</label><input class="input" type="date" id="f-data" value="' + esc(dataIni) + '"' + (travaData ? ' disabled' : '') + '></div>' +
+      '<div class="field" id="w-status"><label for="f-status">Situação</label><select class="input" id="f-status"></select></div></div>' +
+      '<div class="hint" id="h-cartao" hidden></div>' +
+      '<div class="field" id="w-div"' + (st.destino === 'casal' ? '' : ' hidden') + '><label for="f-div">Divisão desta despesa</label><select class="input" id="f-div">' + DIVS().map(([k, n]) => '<option value="' + k + '"' + ((base.divisao || 'padrao') === k ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select></div>' +
       (editar ? (item.parcela ? '<div class="hint">Parcela ' + esc(item.parcela) + '. A alteração vale só para esta.</div>' : '') +
         (item.fixaId ? '<div class="note"><span>Conta fixa: esta alteração vale só para ' + esc(mesLongo(item.mes)) + '.' + (acharFixa(src, item.fixaId) ? ' <button class="link" type="button" data-act="fixa-abrir" data-esc="' + (src === 'conj' ? 'casal' : 'meu') + '" data-id="' + esc(item.fixaId) + '">Editar a conta fixa</button>' : '') + '</span></div>' : '') :
-        '<div class="field"><span>Repetir</span>' + seg('rep', [['unica', 'Uma vez'], ['parcelada', 'Parcelado'], ['fixa', 'Conta fixa']], 'unica') +
+        '<div class="field"><span>Repetir</span>' + seg('rep', [['unica', 'Uma vez'], ['parcelada', 'Parcelado'], ['fixa', 'Conta fixa']], base.parcelas > 1 ? 'parcelada' : 'unica') +
         '<div class="hint" id="h-fixa" hidden>Lança sozinho todo mês, no mesmo dia, até você encerrar. Dá para ver e editar em “Contas fixas”.</div>' +
-        '<div class="two" id="w-n" hidden><div class="field"><label for="f-n">Quantidade de meses</label><input class="input" type="number" id="f-n" min="2" max="60" value="2" inputmode="numeric"></div><div class="hint" id="h-n" style="align-self:end;padding-bottom:6px"></div></div></div>') +
+        '<div class="two" id="w-n"' + (base.parcelas > 1 ? '' : ' hidden') + '><div class="field"><label for="f-n">Quantidade de parcelas</label><input class="input" type="number" id="f-n" min="2" max="60" value="' + (base.parcelas > 1 ? base.parcelas : 2) + '" inputmode="numeric"></div><div class="hint" id="h-n" style="align-self:end;padding-bottom:6px"></div></div></div>') +
       '<div class="err" id="f-err" hidden></div>' +
       '<button class="btn block" type="submit">' + (editar ? 'Salvar alterações' : 'Lançar') + '</button>' +
       (editar ? '<div class="btn-row"><button class="btn danger" type="button" id="b-del">Excluir</button>' + (item.grupo ? '<button class="btn danger" type="button" id="b-del-g">Excluir esta e as próximas</button>' : '') + '</div>' : '') +
       '</form>';
     abrirModal(editar ? 'Editar lançamento' : 'Novo lançamento', corpo, (el) => {
       const f = $('#f-lanc', el);
-      const desenharCats = () => {
-        const lista = st.tipo === 'receita' && st.destino === 'pessoal' ? CAT_REC : CAT_DESP;
-        if (!lista.some(([k]) => k === st.cat)) st.cat = lista[0][0];
-        $('#f-cats', el).innerHTML = lista.map(([k, i, n]) => '<button type="button" data-cat="' + k + '" aria-pressed="' + (k === st.cat) + '">' + i + ' ' + esc(n) + '</button>').join('');
-        const sel = $('#f-status', el);
-        const atual = sel.value || (item ? item.status : 'pago');
+      const pagSel = $('#f-pag', el);
+      const atualizar = () => {
         const rec = st.tipo === 'receita' && st.destino === 'pessoal';
+        $('#w-pag', el).hidden = rec;
+        const { pag, cartaoId } = lerPag(pagSel.value);
+        const c = !rec && pag === 'cartao' ? cartaoDe(cartaoId) : null;
+        $('#w-status', el).hidden = !!c;
+        $('#l-data', el).textContent = c ? 'Data da compra' : 'Data';
+        const sel = $('#f-status', el);
+        const atual = sel.value || (base.status || 'pago');
         sel.innerHTML = '<option value="pago">' + (rec ? 'Recebido' : 'Pago') + '</option><option value="pendente">' + (rec ? 'A receber' : 'A pagar') + '</option>';
         sel.value = atual === 'pendente' ? 'pendente' : 'pago';
-      };
-      const atualizarRep = () => {
         const rep = radio(f, 'rep');
-        const w = $('#w-n', el); if (!w) return;
-        w.hidden = rep !== 'parcelada';
+        const w = $('#w-n', el);
+        if (w) w.hidden = rep !== 'parcelada';
         const hf = $('#h-fixa', el); if (hf) hf.hidden = rep !== 'fixa';
-        const n = Math.max(2, Math.floor(Number($('#f-n', el).value) || 2));
+        const n = Math.max(2, Math.floor(Number(($('#f-n', el) || {}).value) || 2));
         const v = FL.parseValor($('#f-valor', el).value);
-        const h = $('#h-n', el);
-        if (rep === 'parcelada') { $('#l-valor', el).textContent = 'Valor total'; h.textContent = v > 0 ? n + '× de ' + fmt(v / n) : 'O total é dividido em parcelas mensais.'; }
-        else if (rep === 'fixa') { $('#l-valor', el).textContent = 'Valor por mês'; }
-        else $('#l-valor', el).textContent = 'Valor';
+        const hn = $('#h-n', el);
+        if (rep === 'parcelada') { $('#l-valor', el).textContent = 'Valor total'; if (hn) hn.textContent = v > 0 ? n + '× de ' + fmt(v / n) : 'O total é dividido em parcelas mensais.'; }
+        else $('#l-valor', el).textContent = rep === 'fixa' ? 'Valor por mês' : 'Valor';
+        const hc = $('#h-cartao', el);
+        const data = $('#f-data', el).value;
+        if (c && /^\d{4}-\d{2}-\d{2}$/.test(data)) {
+          const mf = FL.mesFatura(data, c.fechamento, c.vencimento);
+          hc.hidden = false;
+          hc.textContent = rep === 'parcelada' ? 'Parcelas nas faturas de ' + mesCurto(mf) + ' a ' + mesCurto(FL.addMeses(mf, n - 1)) + '.' : 'Cai na fatura de ' + mesCurto(mf) + ' (vence ' + dataCurta(FL.vencFatura(mf, c.vencimento)).slice(0, 5) + ').';
+        } else hc.hidden = true;
       };
+      const desenharCats = () => {
+        const tipo = st.tipo === 'receita' && st.destino === 'pessoal' ? 'receita' : 'despesa';
+        if (!catsLista(tipo).some((c) => c.id === st.cat)) st.cat = catsLista(tipo)[0].id;
+        $('#f-cats', el).innerHTML = catChips(tipo, st.cat);
+        atualizar();
+      };
+      ligarCatChips($('#f-cats', el), st);
       desenharCats();
+      pagSel.addEventListener('change', () => {
+        if (pagSel.value === 'novo-cartao') {
+          const rasc = coletar();
+          pagSel.value = 'pix';
+          formCartao(null, (novoId) => setTimeout(() => formLanc(src, null, Object.assign(rasc, { pag: 'cartao', cartaoId: novoId })), 300));
+          return;
+        }
+        atualizar();
+      });
       f.addEventListener('change', (e) => {
-        if (e.target.name === 'dest') { st.destino = e.target.value; $('#w-tipo', el).hidden = st.destino === 'casal'; desenharCats(); }
-        if (e.target.name === 'tipo') { st.tipo = e.target.value; desenharCats(); }
-        if (e.target.name === 'rep') atualizarRep();
+        if (e.target.name === 'dest') { st.destino = e.target.value; $('#w-tipo', el).hidden = st.destino === 'casal'; $('#w-div', el).hidden = st.destino !== 'casal'; desenharCats(); }
+        else if (e.target.name === 'tipo') { st.tipo = e.target.value; desenharCats(); }
+        else atualizar();
       });
-      f.addEventListener('input', (e) => { if (e.target.id === 'f-n' || e.target.id === 'f-valor') atualizarRep(); });
-      $('#f-cats', el).addEventListener('click', (e) => {
-        const b = e.target.closest('button[data-cat]'); if (!b) return;
-        st.cat = b.dataset.cat; $$('#f-cats button', el).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-      });
+      f.addEventListener('input', (e) => { if (['f-n', 'f-valor', 'f-data'].includes(e.target.id)) atualizar(); });
+      function coletar() {
+        const { pag, cartaoId } = lerPag(pagSel.value);
+        return { destino: st.destino, tipo: st.tipo, cat: st.cat, valor: FL.parseValor($('#f-valor', el).value) || null, desc: $('#f-desc', el).value.trim(), data: $('#f-data', el).value, pag, cartaoId, divisao: $('#f-div', el).value, status: $('#f-status', el).value };
+      }
       f.addEventListener('submit', async (e) => {
         e.preventDefault();
         const err = $('#f-err', el);
@@ -595,43 +917,55 @@ import { DB, Conta } from './firebase-shim.js';
         const valor = FL.parseValor($('#f-valor', el).value);
         if (!(valor > 0)) return erro('Informe um valor maior que zero (ex.: 150,90).');
         const data = $('#f-data', el).value;
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return erro('Escolha a data.');
+        if (!travaData && !/^\d{4}-\d{2}-\d{2}$/.test(data)) return erro('Escolha a data.');
         const tipo = st.destino === 'casal' ? 'despesa' : st.tipo;
         const desc = $('#f-desc', el).value.trim() || cat(st.cat).nome;
-        const status = $('#f-status', el).value;
+        let { pag, cartaoId } = lerPag(pagSel.value);
+        if (tipo === 'receita') { pag = null; cartaoId = null; }
+        const usaCartao = pag === 'cartao' && cartaoDe(cartaoId);
+        const status = usaCartao ? 'pendente' : $('#f-status', el).value;
+        const divisao = st.destino === 'casal' ? $('#f-div', el).value : null;
+        const escopo = st.destino === 'casal' ? 'casal' : 'meu';
         const btn = f.querySelector('button[type=submit]'); btn.disabled = true;
         if (editar) {
           const ref = src === 'conj' ? S.db.doc('conjunto/' + item.id) : meusCol().doc(item.id);
-          const ok = await escrever(() => ref.update({ tipo, desc, valor, cat: st.cat, data, mes: FL.mesDe(data), status }));
-          if (ok) { fecharModal(); agendarSync(); toast(avisoLimite(src === 'conj' ? 'casal' : 'meu', st.cat, FL.mesDe(data), valor, item.id, tipo) || 'Lançamento atualizado'); } else btn.disabled = false;
+          const upd = { tipo, desc, valor, cat: st.cat, divisao, estimado: false, pag: pag || null, cartaoId: cartaoId || null };
+          if (travaData) { /* parcela no cartão: mantém a fatura */ }
+          else if (usaCartao) {
+            noCartao(upd, data, cartaoId, 0);
+            upd.status = item.pag === 'cartao' ? item.status : 'pendente';
+          } else Object.assign(upd, { data, mes: FL.mesDe(data), dataCompra: null, status });
+          const ok = await escrever(() => ref.update(upd));
+          if (ok) { fecharModal(); agendarSync(); toast(avisoLimite(escopo, st.cat, upd.mes || item.mes, valor, item.id, tipo) || 'Lançamento atualizado'); } else btn.disabled = false;
           return;
         }
         const rep = radio(f, 'rep');
         if (rep === 'fixa') {
-          const escopo = st.destino === 'casal' ? 'casal' : 'meu';
-          const ok = await criarFixa(escopo, { tipo, desc, valor, cat: st.cat, dia: +data.slice(8), inicio: FL.mesDe(data) }, { data, status });
-          if (ok) { fecharModal(); agendarSync(); toast(avisoLimite(escopo, st.cat, FL.mesDe(data), valor, null, tipo) || 'Conta fixa criada: lança todo dia ' + (+data.slice(8)) + '.'); location.hash = escopo === 'casal' ? 'casal' : 'meus'; S.mes = FL.mesDe(data); render(); }
+          const ok = await criarFixa(escopo, { tipo, desc, valor, cat: st.cat, dia: +data.slice(8), inicio: FL.mesDe(data), pag: pag || null, cartaoId: cartaoId || null, divisao }, { data, status });
+          if (ok) { fecharModal(); agendarSync(); toast(avisoLimite(escopo, st.cat, FL.mesDe(data), valor, null, tipo) || 'Conta fixa criada: lança todo dia ' + (+data.slice(8)) + '.'); location.hash = escopo === 'casal' ? 'casal' : 'meus'; render(); }
           else btn.disabled = false;
           return;
         }
         const n = rep === 'unica' ? 1 : Math.floor(Number($('#f-n', el).value) || 0);
-        if (rep !== 'unica' && (n < 2 || n > 60)) { btn.disabled = false; return erro('Use de 2 a 60 meses.'); }
+        if (rep !== 'unica' && (n < 2 || n > 60)) { btn.disabled = false; return erro('Use de 2 a 60 parcelas.'); }
         const serie = FL.gerarSerie(valor, n, rep, data);
         const grupo = serie.length > 1 ? 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) : null;
         const coll = st.destino === 'casal' ? S.db.collection('conjunto') : meusCol();
         btn.textContent = serie.length > 1 ? 'Lançando 0/' + serie.length + '…' : 'Lançando…';
         let ok = true;
+        let mesPrimeiro = FL.mesDe(data);
         for (let i = 0; i < serie.length && ok; i++) {
           const it = serie[i];
-          const doc = { kind: 'lanc', tipo, desc, valor: it.valor, cat: st.cat, data: it.data, mes: FL.mesDe(it.data), status: i === 0 ? status : 'pendente', parcela: it.parcela, grupo, autor: S.uid, criadoEm: Date.now() };
+          let doc = { kind: 'lanc', tipo, desc, valor: it.valor, cat: st.cat, data: it.data, mes: FL.mesDe(it.data), status: i === 0 ? status : 'pendente', parcela: it.parcela, grupo, autor: S.uid, criadoEm: Date.now(), pag: pag || null, cartaoId: null, divisao };
+          if (usaCartao) { doc = noCartao(doc, data, cartaoId, i); doc.status = 'pendente'; }
+          if (i === 0) mesPrimeiro = doc.mes;
           ok = await escrever(() => coll.add(doc));
           if (serie.length > 1) btn.textContent = 'Lançando ' + (i + 1) + '/' + serie.length + '…';
         }
         if (ok) {
           fecharModal(); agendarSync();
-          toast(avisoLimite(st.destino === 'casal' ? 'casal' : 'meu', st.cat, FL.mesDe(data), serie[0].valor, null, tipo) || (serie.length > 1 ? serie.length + ' lançamentos criados' : (st.destino === 'casal' ? 'Lançado no casal' : 'Lançado')));
-          const mesL = FL.mesDe(data);
-          if (mesL !== S.mes) { S.mes = mesL; }
+          toast(avisoLimite(escopo, st.cat, mesPrimeiro, serie[0].valor, null, tipo) || (usaCartao ? 'Lançado na fatura de ' + mesCurto(mesPrimeiro) : serie.length > 1 ? serie.length + ' lançamentos criados' : (st.destino === 'casal' ? 'Lançado no casal' : 'Lançado')));
+          if (mesPrimeiro !== S.mes) S.mes = mesPrimeiro;
           if (st.destino === 'casal' && S.aba === 'meus') location.hash = 'casal';
           else if (st.destino === 'pessoal' && S.aba === 'casal') location.hash = 'meus';
           render();
@@ -645,13 +979,14 @@ import { DB, Conta } from './firebase-shim.js';
         const collRef = () => (src === 'conj' ? S.db.collection('conjunto') : meusCol());
         armar($('#b-del', el), async () => {
           const tpl = item.fixaId ? acharFixa(src, item.fixaId) : null;
-          if (tpl) await escrever(() => (src === 'conj' ? S.db.collection('fixasCasal') : fixasCol()).doc(tpl.id).update({ pulados: (tpl.pulados || []).concat(item.mes) }));
+          const mesCobr = item.fixaId ? item.id.slice(-7) : item.mes;
+          if (tpl) await escrever(() => (src === 'conj' ? S.db.collection('fixasCasal') : fixasCol()).doc(tpl.id).update({ pulados: (tpl.pulados || []).concat(mesCobr) }));
           const ok = await escrever(() => collRef().doc(item.id).delete(), tpl ? 'Excluído só deste mês' : 'Lançamento excluído');
           if (ok) { fecharModal(); agendarSync(); }
         });
         armar($('#b-del-g', el), async () => {
-          const base = src === 'conj' ? S.conj : S.meus;
-          const alvo = base.filter((l) => l.grupo === item.grupo && l.data >= item.data && (src !== 'conj' || l.autor === S.uid));
+          const lista = src === 'conj' ? S.conj : S.meus;
+          const alvo = lista.filter((l) => l.grupo === item.grupo && l.mes >= item.mes && (src !== 'conj' || l.autor === S.uid));
           let ok = true;
           for (const l of alvo) { if (!ok) break; ok = await escrever(() => collRef().doc(l.id).delete()); }
           if (ok) { toast(alvo.length + ' lançamentos excluídos'); fecharModal(); agendarSync(); }
@@ -755,6 +1090,7 @@ import { DB, Conta } from './firebase-shim.js';
         '<div class="field" id="w-fixo"' + (modo === 'fixo' ? '' : ' hidden') + '><label for="c-fixo">Parte de ' + esc(a.nome) + ' (%)</label><input class="input" type="number" id="c-fixo" min="0" max="100" step="1" value="' + fixoA + '" inputmode="numeric"><div class="hint" id="c-fixo-b"></div></div></div>' : '') +
       '<div class="note">' + ICON.lock + '<span>Lançamentos “Só meu” ficam numa área do banco que só a sua conta acessa. A outra pessoa vê apenas os seus totais do mês (renda, gastos e a pagar).</span></div>' +
       '<div class="err" id="c-err" hidden></div><button class="btn block" type="submit">Salvar</button>' +
+      '<div class="field" style="border-top:1px solid var(--line);padding-top:14px"><span>Organização</span><div class="btn-row"><button class="btn ghost" type="button" data-act="categorias">Categorias</button><button class="btn ghost" type="button" data-act="cartao-novo">Novo cartão</button></div></div>' +
       '<div class="field" style="border-top:1px solid var(--line);padding-top:14px"><span>Sua conta</span><div class="sub">' + esc(S.email) + '</div>' +
       '<div class="btn-row"><button class="btn ghost" type="button" data-act="trocar-senha">Alterar senha</button><button class="btn danger" type="button" data-act="sair">Sair do app</button></div></div></form>';
     abrirModal('Configurações', corpo, (el) => {
@@ -844,7 +1180,13 @@ import { DB, Conta } from './firebase-shim.js';
       h += '<p class="sub" style="margin:0">Nenhum gasto ' + (escopo === 'casal' ? 'do casal ' : '') + 'neste mês. Defina limites por categoria para acompanhar quanto ainda pode gastar e receber alertas.</p>';
     } else {
       const max = Math.max(1, ...orc.linhas.map((l) => l.gasto));
-      h += '<div class="orc">' + orc.linhas.map((l) => linhaOrc(l, max)).join('') + '</div>';
+      const porGrupo = {};
+      orc.linhas.forEach((l) => { const g = cat(l.cat).grupo || 'outros'; (porGrupo[g] = porGrupo[g] || []).push(l); });
+      h += catalogo().grupos.filter((g) => porGrupo[g.id]).map((g) => {
+        const ls = porGrupo[g.id];
+        const tot = FL.r2(ls.reduce((t, l) => t + l.gasto, 0));
+        return '<div class="orc-g"><div class="cg-head"><span class="cg-nome">' + esc(g.nome) + '</span><span class="cg-tot">' + fmt(tot) + '</span></div><div class="orc">' + ls.map((l) => linhaOrc(l, max)).join('') + '</div></div>';
+      }).join('');
       if (!orc.total) h += '<div class="hint">Defina limites para ver quanto sobra em cada categoria e ser avisado quando passar.</div>';
     }
     return h + '</section>';
@@ -870,8 +1212,8 @@ import { DB, Conta } from './firebase-shim.js';
     (escopo === 'casal' ? m.orcCasal : m.orcMeu).linhas.forEach((l) => { gastos[l.cat] = l.gasto; });
     const corpo = '<form id="f-lim" class="field" style="gap:12px" novalidate>' +
       '<p class="sub" style="margin:0">' + (escopo === 'casal' ? 'Limites mensais das despesas do casal. Os dois veem.' : 'Seus limites mensais. Só você vê.') + ' Deixe em branco a categoria sem limite.</p>' +
-      '<div class="lim-grid">' + CAT_DESP.map(([k, i, n]) => '<label class="lim-row" for="lim-' + k + '"><span>' + i + ' ' + esc(n) + '<small>' + (gastos[k] ? 'gasto em ' + MESES_C[+S.mes.slice(5) - 1] + ': ' + fmt(gastos[k]) : '') + '</small></span>' +
-        '<span class="money-in sm"><span>R$</span><input id="lim-' + k + '" data-cat="' + k + '" inputmode="decimal" autocomplete="off" placeholder="sem limite" value="' + (atual[k] > 0 ? fmtInput(atual[k]) : '') + '"></span></label>').join('') + '</div>' +
+      gruposDe('despesa').map(({ g, cats }) => '<div class="cg"><div class="cg-nome">' + esc(g.nome) + '</div><div class="lim-grid">' + cats.map((c) => '<label class="lim-row" for="lim-' + esc(c.id) + '"><span>' + c.ico + ' ' + esc(c.nome) + '<small>' + (gastos[c.id] ? 'gasto em ' + MESES_C[+S.mes.slice(5) - 1] + ': ' + fmt(gastos[c.id]) : '') + '</small></span>' +
+        '<span class="money-in sm"><span>R$</span><input id="lim-' + esc(c.id) + '" data-cat="' + esc(c.id) + '" inputmode="decimal" autocomplete="off" placeholder="sem limite" value="' + (atual[c.id] > 0 ? fmtInput(atual[c.id]) : '') + '"></span></label>').join('') + '</div></div>').join('') +
       '<div class="err" id="lim-err" hidden></div><button class="btn block" type="submit">Salvar limites</button></form>';
     abrirModal(escopo === 'casal' ? 'Limites do casal' : 'Meus limites', corpo, (el) => {
       $('#f-lim', el).addEventListener('submit', async (e) => {
@@ -895,26 +1237,31 @@ import { DB, Conta } from './firebase-shim.js';
     return (src === 'conj' || src === 'casal' ? S.fixasCasal : S.fixas).find((f) => f.id === id) || null;
   }
 
-  function docDaFixa(f, mes, data, status) {
-    return { kind: 'lanc', tipo: f.tipo || 'despesa', desc: f.desc, valor: f.valor, cat: f.cat, data, mes, status, fixaId: f.id, parcela: null, grupo: null, autor: S.uid, criadoEm: Date.now() };
+  /* mesCobr = mês da cobrança (o id usa esse mês); com cartão, o lançamento vai para o mês da fatura */
+  function docDaFixa(f, mesCobr, data, status) {
+    const doc = { kind: 'lanc', tipo: f.tipo || 'despesa', desc: f.desc, valor: f.valor, cat: f.cat, data, mes: mesCobr, status, fixaId: f.id, parcela: null, grupo: null, autor: S.uid, criadoEm: Date.now(), pag: f.pag || null, cartaoId: null, divisao: f.divisao || null, estimado: !!f.variavel && status === 'pendente' };
+    if (f.pag === 'cartao' && f.cartaoId && cartaoDe(f.cartaoId)) { noCartao(doc, data, f.cartaoId, 0); if (status === 'pendente') doc.status = 'pendente'; }
+    return doc;
   }
 
   async function criarFixa(escopo, dados, primeiro) {
     const coll = escopo === 'casal' ? S.db.collection('fixasCasal') : fixasCol();
     const ref = coll.doc();
-    const tpl = Object.assign({ tipo: 'despesa' }, dados, { ativa: true, pulados: [], autor: S.uid, criadoEm: Date.now() });
+    const tpl = Object.assign({ tipo: 'despesa', variavel: false, fim: null, pag: null, cartaoId: null, divisao: null }, dados, { ativa: true, pulados: [], autor: S.uid, criadoEm: Date.now() });
     if (escopo === 'casal') tpl.tipo = 'despesa';
     let ok = await escrever(() => ref.set(tpl));
     if (ok && primeiro) {
       const mes = FL.mesDe(primeiro.data);
       const destino = escopo === 'casal' ? S.db.collection('conjunto') : meusCol();
-      ok = await escrever(() => destino.doc(FL.idFixa(ref.id, mes)).set(docDaFixa(Object.assign({ id: ref.id }, tpl), mes, primeiro.data, primeiro.status)));
+      const doc = docDaFixa(Object.assign({ id: ref.id }, tpl), mes, primeiro.data, tpl.pag === 'cartao' ? 'pendente' : primeiro.status);
+      ok = await escrever(() => destino.doc(FL.idFixa(ref.id, mes)).set(doc));
     }
     return ok;
   }
 
   function cardFixas(escopo) {
-    const lista = (escopo === 'casal' ? S.fixasCasal : S.fixas).slice().sort((a, b) => (a.dia || 0) - (b.dia || 0));
+    const hoje = mesHoje();
+    const lista = (escopo === 'casal' ? S.fixasCasal : S.fixas).filter((f) => !f.fim || f.fim >= hoje).sort((a, b) => (a.dia || 0) - (b.dia || 0));
     let h = '<section class="card"><div class="card-head"><h2>' + (escopo === 'casal' ? 'Contas fixas do casal' : 'Contas fixas') + '</h2>' +
       (S.canWrite !== false ? '<button class="link" type="button" data-act="fixa-nova" data-esc="' + escopo + '">+ Nova</button>' : '') + '</div>';
     if (!lista.length) {
@@ -927,13 +1274,24 @@ import { DB, Conta } from './firebase-shim.js';
       const p = escopo === 'casal' ? pessoa(f.autor) : null;
       const receita = f.tipo === 'receita';
       const sub = ['todo dia ' + (f.dia || 1), c.nome];
+      if (f.pag === 'cartao') { const k = f.autor === S.uid ? cartaoDe(f.cartaoId) : null; sub.push('💳 ' + (k ? k.nome : 'cartão')); }
+      if (f.fim) sub.push('até ' + mesCurto(f.fim));
       if (p) sub.push('paga: ' + p.nome);
       return '<div class="item" role="button" tabindex="0" data-act="fixa-abrir" data-esc="' + escopo + '" data-id="' + esc(f.id) + '"><span class="ico">' + c.ico + (p ? '<span class="dot" style="background:' + esc(p.cor) + '"></span>' : '') + '</span>' +
         '<div style="min-width:0"><div class="t">' + esc(f.desc) + '</div><div class="s">' + esc(sub.join(' · ')) + '</div></div>' +
-        '<span class="r"><span class="val ' + (receita ? 'pos' : '') + '">' + (receita ? '+' : '−') + ' ' + fmt(f.valor) + '</span><span class="sub" style="font-size:11px">por mês</span></span></div>';
+        '<span class="r"><span class="val ' + (receita ? 'pos' : '') + '">' + (receita ? '+' : '−') + ' ' + (f.variavel ? '≈ ' : '') + fmt(f.valor) + '</span><span class="sub" style="font-size:11px">' + (f.variavel ? 'varia' : 'por mês') + '</span></span></div>';
     }).join('') + '</div>' +
       '<div class="rows" style="border-top:1px dashed var(--line);padding-top:8px">' + (desp ? '<div class="rowkv"><span class="k">Despesas fixas por mês</span><span class="v">' + fmt(desp) + '</span></div>' : '') + (rec ? '<div class="rowkv"><span class="k">Receitas fixas por mês</span><span class="v pos">' + fmt(rec) + '</span></div>' : '') + '</div>';
     return h + '</section>';
+  }
+
+  function seletorMes(idMes, idAno, valor, comVazio, anosAdiante) {
+    const hoje = mesHoje();
+    const y0 = +hoje.slice(0, 4);
+    const anos = []; for (let y = y0 - 1; y <= y0 + (anosAdiante || 1); y++) anos.push(y);
+    const [vy, vm] = valor ? valor.split('-').map(Number) : [null, null];
+    return '<div class="two" style="gap:6px"><select class="input" id="' + idMes + '">' + (comVazio ? '<option value="">—</option>' : '') + MESES_C.map((n, i) => '<option value="' + pad(i + 1) + '"' + (vm === i + 1 ? ' selected' : '') + '>' + n + '</option>').join('') + '</select>' +
+      '<select class="input" id="' + idAno + '">' + (comVazio ? '<option value="">—</option>' : '') + anos.map((y) => '<option' + (vy === y ? ' selected' : '') + '>' + y + '</option>').join('') + '</select></div>';
   }
 
   function formFixa(escopo, item) {
@@ -941,38 +1299,40 @@ import { DB, Conta } from './firebase-shim.js';
     if (editar && escopo === 'casal' && item.autor !== S.uid) {
       const p = pessoa(item.autor); const c = cat(item.cat);
       return abrirModal('Conta fixa do casal', '<div class="who">' + avatar(p) + '<div><div class="name">' + esc(item.desc) + '</div><div class="sub">Paga por ' + esc(p.nome) + '</div></div></div>' +
-        '<div class="rows"><div class="rowkv"><span class="k">Valor por mês</span><span class="v">' + fmt(item.valor) + '</span></div><div class="rowkv"><span class="k">Dia</span><span class="v">todo dia ' + (item.dia || 1) + '</span></div><div class="rowkv"><span class="k">Categoria</span><span class="v">' + c.ico + ' ' + esc(c.nome) + '</span></div></div>' +
+        '<div class="rows"><div class="rowkv"><span class="k">Valor por mês</span><span class="v">' + (item.variavel ? '≈ ' : '') + fmt(item.valor) + '</span></div><div class="rowkv"><span class="k">Dia</span><span class="v">todo dia ' + (item.dia || 1) + '</span></div><div class="rowkv"><span class="k">Categoria</span><span class="v">' + c.ico + ' ' + esc(c.nome) + '</span></div>' +
+        (item.fim ? '<div class="rowkv"><span class="k">Termina em</span><span class="v">' + esc(mesCurto(item.fim)) + '</span></div>' : '') + '</div>' +
         '<div class="note">Só ' + esc(p.nome) + ' pode alterar ou encerrar esta conta fixa.</div>');
     }
     const st = { tipo: (item && item.tipo) || 'despesa', cat: (item && item.cat) || (escopo === 'casal' ? 'moradia' : 'assinaturas') };
     const hoje = mesHoje();
-    const anos = [+hoje.slice(0, 4) - 1, +hoje.slice(0, 4), +hoje.slice(0, 4) + 1];
     const corpo = '<form id="f-fixa" class="field" style="gap:14px" novalidate>' +
       (escopo === 'meu' ? '<div class="field"><span>Tipo</span>' + seg('ftipo', [['despesa', 'Despesa fixa'], ['receita', 'Receita fixa']], st.tipo) + '</div>' : '<div class="note">Despesa do casal paga por você. Entra na divisão do mês como as outras.</div>') +
       '<div class="field"><label for="x-valor">Valor por mês</label><div class="money-in"><span>R$</span><input id="x-valor" inputmode="decimal" autocomplete="off" placeholder="0,00" value="' + (item ? fmtInput(item.valor) : '') + '"></div></div>' +
+      '<label class="check"><input type="checkbox" id="x-var"' + (item && item.variavel ? ' checked' : '') + '> O valor muda todo mês (luz, água…). O app lança uma estimativa e pede o valor real quando você pagar.</label>' +
       '<div class="field"><label for="x-desc">Descrição</label><input class="input" id="x-desc" maxlength="60" placeholder="Ex.: Internet" value="' + esc(item ? item.desc : '') + '"></div>' +
-      '<div class="field"><span>Categoria</span><div class="catpick" id="x-cats"></div></div>' +
+      '<div class="field"><span>Categoria</span><div id="x-cats"></div></div>' +
+      '<div class="field" id="wx-pag"><label for="x-pag">Forma de pagamento</label><select class="input" id="x-pag">' + opcoesPag(item ? item.pag : 'pix', item ? item.cartaoId : null).replace('<option value="novo-cartao">+ Cadastrar cartão…</option>', '') + '</select></div>' +
+      (escopo === 'casal' ? '<div class="field"><label for="x-div">Divisão</label><select class="input" id="x-div">' + DIVS().map(([k, n]) => '<option value="' + k + '"' + (((item && item.divisao) || 'padrao') === k ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</select></div>' : '') +
       '<div class="two"><div class="field"><label for="x-dia">Dia do mês</label><input class="input" type="number" id="x-dia" min="1" max="31" inputmode="numeric" value="' + ((item && item.dia) || +hojeISO().slice(8)) + '"></div>' +
       (editar ? '<div class="field"><span>Desde</span><div class="input" style="background:transparent">' + esc(mesCurto(item.inicio)) + '</div></div>' :
-        '<div class="field"><label for="x-mes">Começa em</label><div class="two" style="gap:6px"><select class="input" id="x-mes">' + MESES_C.map((n, i) => '<option value="' + pad(i + 1) + '"' + (i + 1 === +hoje.slice(5) ? ' selected' : '') + '>' + n + '</option>').join('') + '</select><select class="input" id="x-ano">' + anos.map((y) => '<option' + (y === +hoje.slice(0, 4) ? ' selected' : '') + '>' + y + '</option>').join('') + '</select></div></div>') + '</div>' +
+        '<div class="field"><label for="x-mes">Começa em</label>' + seletorMes('x-mes', 'x-ano', hoje, false, 1) + '</div>') + '</div>' +
+      '<div class="field"><label for="x-fmes">Termina em (opcional)</label>' + seletorMes('x-fmes', 'x-fano', item && item.fim, true, 6) + '<div class="hint">Para financiamentos, planos com prazo ou assinaturas que você vai cancelar. Deixe em branco se não tem data para acabar.</div></div>' +
       (editar ? '<div class="hint">Alterar vale para este mês (se ainda estiver a pagar) e os próximos. Meses anteriores ficam como estão.</div>' : '<div class="hint">O app lança sozinho todo mês, como “a pagar”. Meses anteriores ao atual entram como pagos.</div>') +
       '<div class="err" id="x-err" hidden></div><button class="btn block" type="submit">' + (editar ? 'Salvar alterações' : 'Criar conta fixa') + '</button>' +
-      (editar ? '<button class="btn danger" type="button" id="x-fim">Encerrar conta fixa</button>' : '') + '</form>';
+      (editar ? '<button class="btn danger" type="button" id="x-fim">Encerrar conta fixa agora</button>' : '') + '</form>';
     abrirModal(editar ? 'Editar conta fixa' : (escopo === 'casal' ? 'Nova conta fixa do casal' : 'Nova conta fixa'), corpo, (el) => {
       const f = $('#f-fixa', el);
       const cats = () => {
-        const lista = st.tipo === 'receita' ? CAT_REC : CAT_DESP;
-        if (!lista.some(([k]) => k === st.cat)) st.cat = lista[0][0];
-        $('#x-cats', el).innerHTML = lista.map(([k, i, n]) => '<button type="button" data-cat="' + k + '" aria-pressed="' + (k === st.cat) + '">' + i + ' ' + esc(n) + '</button>').join('');
+        const tipo = st.tipo === 'receita' ? 'receita' : 'despesa';
+        if (!catsLista(tipo).some((c) => c.id === st.cat)) st.cat = catsLista(tipo)[0].id;
+        $('#x-cats', el).innerHTML = catChips(tipo, st.cat);
+        $('#wx-pag', el).hidden = tipo === 'receita';
       };
+      ligarCatChips($('#x-cats', el), st);
       cats();
       f.addEventListener('change', (e) => { if (e.target.name === 'ftipo') { st.tipo = e.target.value; cats(); } });
-      $('#x-cats', el).addEventListener('click', (e) => {
-        const b = e.target.closest('button[data-cat]'); if (!b) return;
-        st.cat = b.dataset.cat; $$('#x-cats button', el).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-      });
       const coll = escopo === 'casal' ? S.db.collection('fixasCasal') : fixasCol();
-      const lancs = () => (escopo === 'casal' ? S.conj : S.meus).filter((l) => item && l.fixaId === item.id && l.mes >= mesHoje() && l.status === 'pendente');
+      const lancs = () => (escopo === 'casal' ? S.conj : S.meus).filter((l) => item && l.fixaId === item.id && l.id.slice(-7) >= mesHoje() && l.status === 'pendente');
       const destino = () => (escopo === 'casal' ? S.db.collection('conjunto') : meusCol());
       f.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -982,28 +1342,40 @@ import { DB, Conta } from './firebase-shim.js';
         if (!(valor > 0)) return erro('Informe o valor por mês (ex.: 119,90).');
         const dia = Math.floor(Number($('#x-dia', el).value));
         if (!(dia >= 1 && dia <= 31)) return erro('O dia precisa ser de 1 a 31.');
+        const fm = $('#x-fmes', el).value, fa = $('#x-fano', el).value;
+        if (!!fm !== !!fa) return erro('Para “Termina em”, escolha mês e ano (ou deixe os dois em branco).');
+        const fim = fm && fa ? fa + '-' + fm : null;
         const desc = $('#x-desc', el).value.trim() || cat(st.cat).nome;
         const tipo = escopo === 'casal' ? 'despesa' : st.tipo;
+        let { pag, cartaoId } = lerPag($('#x-pag', el).value);
+        if (tipo === 'receita') { pag = null; cartaoId = null; }
+        const dados = { tipo, desc, valor, cat: st.cat, dia, fim, variavel: $('#x-var', el).checked, pag: pag || null, cartaoId: cartaoId || null, divisao: escopo === 'casal' ? $('#x-div', el).value : null };
         const b = f.querySelector('button[type=submit]'); b.disabled = true;
         if (!editar) {
           const inicio = $('#x-ano', el).value + '-' + $('#x-mes', el).value;
-          const ok = await criarFixa(escopo, { tipo, desc, valor, cat: st.cat, dia, inicio });
+          if (fim && fim < inicio) { b.disabled = false; return erro('O mês de término é antes do início.'); }
+          const ok = await criarFixa(escopo, Object.assign(dados, { inicio }));
           if (ok) { fecharModal(); toast('Conta fixa criada: lança todo dia ' + dia + '.'); agendarFixas(); } else b.disabled = false;
           return;
         }
-        let ok = await escrever(() => coll.doc(item.id).update({ tipo, desc, valor, cat: st.cat, dia }));
+        let ok = await escrever(() => coll.doc(item.id).update(dados));
+        const novo = Object.assign({}, item, dados);
         for (const l of lancs()) {
           if (!ok) break;
-          const [y, mm] = l.mes.split('-').map(Number);
-          const data = l.mes + '-' + pad(Math.min(dia, new Date(y, mm, 0).getDate()));
-          ok = await escrever(() => destino().doc(l.id).update({ tipo, desc, valor, cat: st.cat, data }));
+          const mesCobr = l.id.slice(-7);
+          if (fim && mesCobr > fim) { ok = await escrever(() => destino().doc(l.id).delete()); continue; }
+          const [y, mm] = mesCobr.split('-').map(Number);
+          const data = mesCobr + '-' + pad(Math.min(dia, new Date(y, mm, 0).getDate()));
+          const doc = docDaFixa(novo, mesCobr, data, 'pendente');
+          delete doc.criadoEm;
+          ok = await escrever(() => destino().doc(l.id).update(doc));
         }
-        if (ok) { fecharModal(); agendarSync(); toast('Conta fixa atualizada'); } else b.disabled = false;
+        if (ok) { fecharModal(); agendarSync(); agendarFixas(); toast('Conta fixa atualizada'); } else b.disabled = false;
       });
-      const fim = $('#x-fim', el);
-      if (fim) fim.addEventListener('click', async () => {
-        if (!fim.dataset.armed) { fim.dataset.armed = '1'; fim.textContent = 'Toque de novo: encerra e remove os meses a pagar a partir de agora'; return; }
-        fim.disabled = true;
+      const fimBtn = $('#x-fim', el);
+      if (fimBtn) fimBtn.addEventListener('click', async () => {
+        if (!fimBtn.dataset.armed) { fimBtn.dataset.armed = '1'; fimBtn.textContent = 'Toque de novo: encerra e remove os meses a pagar a partir de agora'; return; }
+        fimBtn.disabled = true;
         let ok = await escrever(() => coll.doc(item.id).delete());
         for (const l of lancs()) { if (!ok) break; ok = await escrever(() => destino().doc(l.id).delete()); }
         if (ok) { fecharModal(); agendarSync(); toast('Conta fixa encerrada. Os meses já pagos continuam lançados.'); }
@@ -1023,6 +1395,7 @@ import { DB, Conta } from './firebase-shim.js';
       const hoje = mesHoje();
       const ate = FL.addMeses(hoje, 1);
       const lotes = [];
+      if (!S.firm.cartoes) return;
       if (S.firm.meus && S.firm.fixas) lotes.push({ fixas: S.fixas, exist: new Set(S.meus.map((l) => l.id)), destino: meusCol() });
       if (S.firm.conj && S.firm.fixasCasal) lotes.push({ fixas: S.fixasCasal.filter((f) => f.autor === S.uid), exist: new Set(S.conj.map((l) => l.id)), destino: S.db.collection('conjunto') });
       for (const lote of lotes) {
@@ -1140,6 +1513,7 @@ import { DB, Conta } from './firebase-shim.js';
       const src = el.dataset.src;
       const base = src === 'conj' ? S.conj : S.meus;
       const l = base.find((x) => x.id === el.dataset.id); if (!l) return;
+      if (l.estimado && l.status === 'pendente') return formConfirmarValor(l, src);
       const novo = l.status === 'pendente' ? 'pago' : 'pendente';
       const ref = src === 'conj' ? S.db.doc('conjunto/' + l.id) : meusCol().doc(l.id);
       if (await escrever(() => ref.update({ status: novo }))) agendarSync();
@@ -1160,6 +1534,15 @@ import { DB, Conta } from './firebase-shim.js';
     else if (act === 'editar-viagem') formViagem();
     else if (act === 'config') formConfig();
     else if (act === 'limites') formLimites(el.dataset.esc);
+    else if (act === 'cartao-novo') formCartao(null);
+    else if (act === 'cartao-editar') { const c = cartaoDe(el.dataset.id); if (c) formCartao(c); }
+    else if (act === 'fatura-ver') verFatura(el.dataset.id, el.dataset.mes);
+    else if (act === 'fatura-pagar' || act === 'fatura-reabrir') { e.stopPropagation(); const noModal = !!el.closest('.sheet'); if (await pagarFatura(el.dataset.id, el.dataset.mes, act === 'fatura-pagar' ? 'pago' : 'pendente') && noModal) setTimeout(() => verFatura(el.dataset.id, el.dataset.mes), 400); }
+    else if (act === 'categorias') formCategorias();
+    else if (act === 'cat-editar') { const c = catalogo().cats.find((x) => x.id === el.dataset.id); if (c) formCategoria(c); }
+    else if (act === 'cat-nova') formCategoria(null);
+    else if (act === 'grupo-editar') { const g = catalogo().grupos.find((x) => x.id === el.dataset.id); if (g) formGrupo(g); }
+    else if (act === 'grupo-novo') formGrupo(null);
     else if (act === 'fixa-nova') formFixa(el.dataset.esc);
     else if (act === 'fixa-abrir') { const f = acharFixa(el.dataset.esc === 'casal' ? 'conj' : 'meu', el.dataset.id); if (f) formFixa(el.dataset.esc, f); }
     else if (act === 'evo-quem') { S.evoQuem = el.dataset.v; S.evoSel = null; render(); }
@@ -1265,7 +1648,7 @@ import { DB, Conta } from './firebase-shim.js';
       if (!snap.metadata.fromCache) S.firm[chave] = true;
       if (S.got.membros && S.got.meus) clearTimeout(timer);
       if (chave === 'meus' || chave === 'resumos') agendarSync();
-      if (chave === 'meus' || chave === 'fixas' || chave === 'conj' || chave === 'fixasCasal' || chave === 'membros') agendarFixas();
+      if (chave === 'meus' || chave === 'fixas' || chave === 'conj' || chave === 'fixasCasal' || chave === 'membros' || chave === 'cartoes') agendarFixas();
       render();
     }, (err) => {
       console.warn('snapshot', chave, err);
@@ -1280,7 +1663,8 @@ import { DB, Conta } from './firebase-shim.js';
     ouvintes.forEach((p) => { try { p(); } catch (e) { /* ignora */ } });
     ouvintes = [];
     clearTimeout(timer);
-    Object.assign(S, { uid: null, email: '', meus: [], conj: [], cofre: [], membros: {}, resumos: {}, cfgCasal: {}, viagem: null, acertos: {}, fixas: [], fixasCasal: [], limites: {}, limitesCasal: {}, evoSel: null, got: {}, firm: {}, timeout: false });
+    Object.assign(S, { uid: null, email: '', meus: [], conj: [], cofre: [], membros: {}, resumos: {}, cfgCasal: {}, viagem: null, acertos: {}, fixas: [], fixasCasal: [], limites: {}, limitesCasal: {}, cartoes: [], catalogo: null, evoSel: null, got: {}, firm: {}, timeout: false });
+    reindexarCats();
     tentados.clear();
     fecharModal();
   }
@@ -1293,8 +1677,9 @@ import { DB, Conta } from './firebase-shim.js';
     ouvir(db.collection('resumos'), 'resumos', (s) => { const o = {}; s.docs.forEach((d) => { o[d.id] = d.data(); }); S.resumos = o; });
     ouvir(db.collection('conjunto'), 'conj', (s) => { S.conj = lista(s).filter((x) => x.mes && x.data); });
     ouvir(db.collection('cofrinho'), 'cofre', (s) => { S.cofre = lista(s).filter((x) => x.mes && x.data); });
-    ouvir(db.collection('config'), 'config', (s) => { S.cfgCasal = {}; S.viagem = null; S.limitesCasal = {}; s.docs.forEach((d) => { if (d.id === 'casal') S.cfgCasal = d.data(); if (d.id === 'viagem') S.viagem = d.data(); if (d.id === 'limitesCasal') S.limitesCasal = d.data().limites || {}; }); });
+    ouvir(db.collection('config'), 'config', (s) => { S.cfgCasal = {}; S.viagem = null; S.limitesCasal = {}; S.catalogo = null; s.docs.forEach((d) => { if (d.id === 'casal') S.cfgCasal = d.data(); if (d.id === 'viagem') S.viagem = d.data(); if (d.id === 'limitesCasal') S.limitesCasal = d.data().limites || {}; if (d.id === 'categorias') S.catalogo = d.data(); }); reindexarCats(); });
     ouvir(fixasCol(), 'fixas', (s) => { S.fixas = lista(s); });
+    ouvir(db.collection('usuarios/' + S.uid + '/cartoes'), 'cartoes', (s) => { S.cartoes = lista(s).sort((a, b) => (a.criadoEm || 0) - (b.criadoEm || 0)); });
     ouvir(db.collection('fixasCasal'), 'fixasCasal', (s) => { S.fixasCasal = lista(s); });
     ouvir(db.collection('usuarios/' + S.uid + '/config'), 'limites', (s) => { S.limites = {}; s.docs.forEach((d) => { if (d.id === 'limites') S.limites = d.data().limites || {}; }); });
     ouvir(db.collection('acertos'), 'acertos', (s) => { const o = {}; s.docs.forEach((d) => { o[d.id] = d.data(); }); S.acertos = o; });

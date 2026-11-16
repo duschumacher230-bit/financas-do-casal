@@ -106,23 +106,40 @@
     return { pct: { [a]: 0.5, [b]: 0.5 }, base: 'semRenda' };
   }
 
+  /* Divisão de um lançamento do casal: padrão (proporcional/config), meio a meio, só quem pagou ou só o outro */
+  function pctItem(l, ids, pct) {
+    if (ids.length !== 2 || !l) return pct;
+    const [a, b] = ids;
+    const modo = l.divisao || 'padrao';
+    if (modo === 'igual') return { [a]: 0.5, [b]: 0.5 };
+    if ((modo === 'so_autor' || modo === 'so_outro') && (l.autor === a || l.autor === b)) {
+      const outro = l.autor === a ? b : a;
+      return modo === 'so_autor' ? { [l.autor]: 1, [outro]: 0 } : { [l.autor]: 0, [outro]: 1 };
+    }
+    return pct;
+  }
+
   /* Despesas do casal no mês: quem pagou, parte de cada um e acerto */
   function conjuntoMes(lancs, mes, ids, pct) {
     const r = { total: 0, aPagar: 0, pago: {}, parte: {}, saldo: {}, itens: [], acerto: null };
     ids.forEach((id) => { r.pago[id] = 0; });
+    const bruto = {};
+    ids.forEach((id) => { bruto[id] = 0; });
     for (const l of lancs || []) {
       if (!l || l.mes !== mes || !(l.valor > 0)) continue;
       r.itens.push(l);
       r.total += l.valor;
       if (l.status === 'pendente') r.aPagar += l.valor;
       if (l.autor in r.pago) r.pago[l.autor] += l.valor;
+      const p = pctItem(l, ids, pct);
+      ids.forEach((id) => { bruto[id] += l.valor * (p[id] || 0); });
     }
     r.total = r2(r.total);
     r.aPagar = r2(r.aPagar);
     ids.forEach((id) => { r.pago[id] = r2(r.pago[id]); });
     if (ids.length === 2) {
       const [a, b] = ids;
-      r.parte[a] = r2(r.total * (pct[a] || 0));
+      r.parte[a] = r2(bruto[a]);
       r.parte[b] = r2(r.total - r.parte[a]);
       r.saldo[a] = r2(r.pago[a] - r.parte[a]);
       r.saldo[b] = r2(r.pago[b] - r.parte[b]);
@@ -198,6 +215,26 @@
     return Object.entries(out).sort((x, y) => y[1] - x[1]);
   }
 
+  /* ---------- cartões de crédito ---------- */
+  /* Mês da fatura em que cai uma compra: comprou no dia do fechamento ou depois, vai para a próxima;
+     se o vencimento é antes (ou no mesmo dia) do fechamento, a fatura vence no mês seguinte ao fechamento. */
+  function mesFatura(dataISO, fechamento, vencimento) {
+    const dia = +String(dataISO).slice(8, 10);
+    let m = String(dataISO).slice(0, 7);
+    if (dia >= fechamento) m = addMeses(m, 1);
+    if (!(vencimento > fechamento)) m = addMeses(m, 1);
+    return m;
+  }
+  function vencFatura(mes, vencimento) {
+    const [y, mm] = mes.split('-').map(Number);
+    return mes + '-' + pad(Math.min(Math.max(1, vencimento || 1), diasNoMes(y, mm)));
+  }
+
+  /* Texto sem acento e minúsculo, para busca */
+  function normalizar(t) {
+    return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  }
+
   /* ---------- contas fixas ---------- */
   const idFixa = (fixaId, mes) => 'fx_' + fixaId + '_' + mes;
 
@@ -271,6 +308,6 @@
     });
   }
 
-  const api = { r2, mesDe, addMeses, difMeses, addMesesData, parseValor, gerarSerie, resumoPessoal, stable, divisao, conjuntoMes, cofrinho, cartaoPessoa, porCategoria, idFixa, fixasAGerar, orcamento, evolucao };
+  const api = { r2, pad, mesDe, addMeses, difMeses, diasNoMes, addMesesData, parseValor, gerarSerie, resumoPessoal, stable, divisao, pctItem, conjuntoMes, cofrinho, cartaoPessoa, porCategoria, idFixa, fixasAGerar, orcamento, evolucao, mesFatura, vencFatura, normalizar };
   root.FL = api;
 })(typeof window !== 'undefined' ? window : globalThis);
