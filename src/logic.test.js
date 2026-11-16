@@ -121,3 +121,37 @@ assert.strictEqual(F.mesFatura('2026-12-20', 15, 22), '2027-01');
 assert.strictEqual(F.vencFatura('2027-02', 30), '2027-02-28');
 assert.strictEqual(F.normalizar('  Ágüa Énergia '), 'agua energia');
 console.log('OK — testes da entrega 1');
+
+// previsão
+const fxP = [{ id: 'p1', valor: 1000, dia: 10, inicio: '2026-11', tipo: 'despesa' }, { id: 'p2', valor: 5000, dia: 5, inicio: '2026-11', tipo: 'receita' },
+  { id: 'p3', valor: 60, dia: 20, inicio: '2026-11', tipo: 'despesa', pag: 'cartao', cartaoId: 'k', fim: '2027-01' }];
+const lancP = [
+  { id: F.idFixa('p1', '2026-11'), mes: '2026-11', valor: 1000, tipo: 'despesa', fixaId: 'p1' },
+  { id: 'x1', mes: '2027-01', valor: 40, tipo: 'despesa', grupo: 'g1' },
+  { id: 'v1', mes: '2026-10', valor: 600, tipo: 'despesa' }, { id: 'v2', mes: '2026-09', valor: 300, tipo: 'despesa' },
+];
+const proj = F.projecao(lancP, fxP, ['2026-11', '2026-12', '2027-01', '2027-02'], '2026-11', { k: { fechamento: 3, vencimento: 10 } }, { '2027-02': 7500 });
+assert.deepStrictEqual(proj.map((p) => [p.mes, p.renda, p.despesas]), [['2026-11', 5000, 1000], ['2026-12', 5000, 1060], ['2027-01', 5000, 1100], ['2027-02', 7500, 1060]]);
+assert.strictEqual(F.mediaVariavel(lancP, '2026-11'), 450);
+const prevs = { e: {}, c: {} };
+proj.forEach((p) => { prevs.e[p.mes] = p; prevs.c[p.mes] = { renda: 2500, despesas: 500 }; });
+const pv = F.previsao({ meses: ['2026-12'], ids: ['e', 'c'], prevs, varMedias: { e: 450, c: 100 }, resumos: {}, conj: [],
+  fixasCasal: [{ id: 'q1', autor: 'e', valor: 1500, dia: 10, inicio: '2026-11' }], mesHoje: '2026-11', cfg: {}, metasPorMes: { '2026-12': 2000 }, incluirVar: true, quem: 'casal' });
+assert.deepStrictEqual(pv[0], { mes: '2026-12', renda: 7500, compromissos: 1060 + 500 + 1500, variaveis: 550, metas: 2000, sobra: 7500 - 3060 - 550 - 2000, pct: (3060 + 550) / 7500 });
+const pvE = F.previsao({ meses: ['2026-12'], ids: ['e', 'c'], prevs, varMedias: { e: 450, c: 100 }, resumos: {}, conj: [],
+  fixasCasal: [{ id: 'q1', autor: 'e', valor: 1500, dia: 10, inicio: '2026-11' }], mesHoje: '2026-11', cfg: {}, metasPorMes: { '2026-12': 2000 }, incluirVar: false, quem: 'e' });
+assert.strictEqual(pvE[0].compromissos, 1060 + 1000);
+assert.strictEqual(pvE[0].metas, 1333.33);
+
+// visão do ano
+const anoC = F.anoCategorias([{ mes: '2026-08', cat: 'agua', valor: 70 }, { mes: '2026-09', cat: 'agua', valor: 70 }, { mes: '2027-01', cat: 'agua', valor: 99 }, { mes: '2026-09', cat: 'salario', valor: 5000, tipo: 'receita' }], 2026, (l) => l.tipo !== 'receita');
+assert.deepStrictEqual(anoC.agua.slice(7, 9), [70, 70]);
+assert.deepStrictEqual(F.totalMedia(anoC.agua), { total: 140, media: 70 });
+console.log('OK — testes da entrega 2');
+
+// no mês atual, a média do dia a dia desconta o que já foi gasto
+const pvAt = F.previsao({ meses: ['2026-11'], ids: ['e', 'c'], prevs: { e: { '2026-11': { renda: 5000, despesas: 1300 } }, c: { '2026-11': { renda: 2500, despesas: 500 } } },
+  varMedias: { e: 450, c: 100 }, varAtuais: { e: 300, c: 150 }, resumos: {}, conj: [], fixasCasal: [], mesHoje: '2026-11', cfg: {}, metasPorMes: {}, incluirVar: true, quem: 'casal' });
+assert.strictEqual(pvAt[0].variaveis, 150);
+assert.strictEqual(F.gastoVariavel(lancP, '2026-10'), 600);
+console.log('OK — previsão sem contar duas vezes o mês atual');

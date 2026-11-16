@@ -134,7 +134,7 @@ import { DB, Conta } from './firebase-shim.js';
     mes: mesHoje(), aba: 'painel', filtro: 'tudo',
     meus: [], conj: [], cofre: [], membros: {}, resumos: {}, cfgCasal: {}, viagem: null, acertos: {},
     fixas: [], fixasCasal: [], limites: {}, limitesCasal: {}, cartoes: [], catalogo: null,
-    evoQuem: 'casal', evoN: 6, evoSel: null,
+    evoQuem: 'casal', evoN: 6, evoSel: null, evoModo: 'hist', evoAno: null, prevVar: true, rendaPrev: {},
     got: {}, firm: {},
   };
   const meusCol = () => S.db.collection('usuarios/' + S.uid + '/lancamentos');
@@ -157,8 +157,8 @@ import { DB, Conta } from './firebase-shim.js';
   const avatar = (p, size) => '<span class="avatar" style="background:' + esc(p.cor) + (size ? ';width:' + size + 'px;height:' + size + 'px;font-size:' + Math.round(size * 0.44) + 'px' : '') + '">' + inicial(p.nome) + '</span>';
 
   /* ---------- modelo do mês ---------- */
-  function modelo() {
-    const mes = S.mes;
+  function modelo(mesParam) {
+    const mes = mesParam || S.mes;
     const I = ids();
     const resumos = Object.assign({}, S.resumos);
     if (S.uid) resumos[S.uid] = { meses: FL.resumoPessoal(S.meus) };
@@ -268,6 +268,7 @@ import { DB, Conta } from './firebase-shim.js';
     const ps = m.I.map(pessoa);
     let h = '';
     if (m.I.length < 2) h += cardConvite();
+    h += cardFechamento();
 
     // Casal
     const base = Math.max(t.renda, t.despesas + t.guardado, 1);
@@ -779,13 +780,16 @@ import { DB, Conta } from './firebase-shim.js';
   let syncT = 0, syncando = false, syncDeNovo = false;
   function agendarSync() { clearTimeout(syncT); syncT = setTimeout(syncResumo, 700); }
   async function syncResumo() {
-    if (!S.firm.meus || !S.got.resumos || !souMembro() || S.canWrite === false) return;
+    if (!S.firm.meus || !S.got.resumos || !S.firm.fixas || !S.firm.cartoes || !S.firm.limites || !souMembro() || S.canWrite === false) return;
     if (syncando) { syncDeNovo = true; return; }
     const meses = FL.resumoPessoal(S.meus);
+    const prev = {};
+    minhaProjecao(proximosMeses(12)).forEach((p) => { prev[p.mes] = { renda: p.renda, despesas: p.despesas }; });
+    const novo = { meses, prev, varMedia: FL.mediaVariavel(S.meus, mesHoje()), varAtual: FL.gastoVariavel(S.meus, mesHoje()) };
     const atual = S.resumos[S.uid];
-    if (atual && FL.stable(atual.meses || {}) === FL.stable(meses)) return;
+    if (atual && FL.stable({ meses: atual.meses || {}, prev: atual.prev || {}, varMedia: atual.varMedia || 0, varAtual: atual.varAtual || 0 }) === FL.stable(novo)) return;
     syncando = true;
-    try { await S.db.doc('resumos/' + S.uid).set({ meses, atualizadoEm: Date.now() }); } catch (e) { console.warn('resumo', e); }
+    try { await S.db.doc('resumos/' + S.uid).set(Object.assign(novo, { atualizadoEm: Date.now() })); } catch (e) { console.warn('resumo', e); }
     syncando = false;
     if (syncDeNovo) { syncDeNovo = false; agendarSync(); }
   }
@@ -1463,6 +1467,8 @@ import { DB, Conta } from './firebase-shim.js';
   }
 
   function viewEvolucao(m) {
+    if (S.evoModo === 'prev') return viewPrevisao(m);
+    if (S.evoModo === 'ano') return viewAno(m);
     const I = m.I;
     const par = parceiro();
     const quem = S.evoQuem === 'casal' || I.includes(S.evoQuem) ? S.evoQuem : 'casal';
@@ -1477,7 +1483,7 @@ import { DB, Conta } from './firebase-shim.js';
     const media = (f) => comDados.length ? FL.r2(comDados.reduce((t, x) => t + x[f], 0) / comDados.length) : 0;
     const totGuard = FL.r2(serie.reduce((t, x) => t + x.guardado, 0));
     const melhor = comDados.length ? comDados.reduce((a, b) => (b.sobra > a.sobra ? b : a)) : null;
-    let h = '<section class="card"><div class="card-head"><div><div class="eyebrow">Evolução</div><h2>Renda, gastos e sobra</h2></div></div>' +
+    let h = '<section class="card">' + abasEvo() + '<div class="card-head"><div><div class="eyebrow">Histórico</div><h2>Renda, gastos e sobra</h2></div></div>' +
       '<div class="evo-ctrl"><div class="chips" role="group" aria-label="De quem">' + opcoes.map(([v, n]) => '<button class="chip" type="button" data-act="evo-quem" data-v="' + esc(v) + '" aria-pressed="' + (quem === v) + '">' + esc(n) + '</button>').join('') + '</div>' +
       '<div class="chips" role="group" aria-label="Período">' + [[6, '6 meses'], [12, '12 meses']].map(([v, n]) => '<button class="chip" type="button" data-act="evo-n" data-v="' + v + '" aria-pressed="' + (S.evoN === v) + '">' + n + '</button>').join('') + '</div></div>' +
       (par && quem === par.id ? '<div class="note">' + ICON.lock + '<span>De ' + esc(par.nome) + ' aparecem só os totais do mês.</span></div>' : '') +
@@ -1488,7 +1494,7 @@ import { DB, Conta } from './firebase-shim.js';
       '<div><span class="k"><b style="background:var(--s-gastos)"></b>Gastos</span><span class="v">' + fmt(d.gastos) + '</span></div>' +
       '<div><span class="k">Guardado viagem</span><span class="v">' + fmt(d.guardado) + '</span></div>' +
       '<div><span class="k"><b class="lk" style="background:var(--s-sobra)"></b>Sobra</span><span class="v ' + valorCls(d.sobra) + '">' + fmt(d.sobra) + '</span></div></div>' +
-      '<div class="hint">Toque em um mês do gráfico para ver os valores.</div></div></section>';
+      '<div class="hint">Toque em um mês do gráfico para ver os valores.</div>' + (quem !== (par && par.id) && (d.renda || d.gastos) ? '<button class="link" type="button" data-act="fechamento" data-mes="' + d.mes + '">Relatório de fechamento de ' + esc(mesCurto(d.mes)) + '</button>' : '') + '</div></section>';
     h += '<section class="card"><div class="stats">' +
       '<div class="stat"><span class="k">Gasto médio por mês</span><span class="v">' + fmt(media('gastos')) + '</span></div>' +
       '<div class="stat"><span class="k">Sobra média por mês</span><span class="v ' + valorCls(media('sobra')) + '">' + fmt(media('sobra')) + '</span></div>' +
@@ -1499,6 +1505,218 @@ import { DB, Conta } from './firebase-shim.js';
       serie.slice().reverse().map((x) => '<tr><td>' + esc(mesCurto(x.mes)) + '</td><td class="v">' + nf(x.renda) + '</td><td class="v">' + nf(x.gastos) + '</td><td class="v">' + nf(x.guardado) + '</td><td class="v ' + valorCls(x.sobra) + '">' + nf(x.sobra) + '</td></tr>').join('') +
       '</tbody></table></div><div class="hint">Gastos incluem a parte de cada um nas despesas do casal. Sobra = renda − gastos − guardado para a viagem.</div></section>';
     return h;
+  }
+
+  /* ---------- previsão ---------- */
+  function mapaCartoes() { const o = {}; S.cartoes.forEach((c) => { o[c.id] = { fechamento: c.fechamento, vencimento: c.vencimento }; }); return o; }
+  function proximosMeses(n, ini) { const b = ini || mesHoje(); return Array.from({ length: n }, (_, i) => FL.addMeses(b, i)); }
+  function minhaProjecao(meses) { return FL.projecao(S.meus, S.fixas, meses, mesHoje(), mapaCartoes(), S.rendaPrev); }
+  function metasPorMes(meses) {
+    const o = {};
+    const c = FL.cofrinho(S.cofre, S.viagem, mesHoje(), [], {});
+    if (S.viagem && c.mesAlvo && c.porMes > 0) meses.forEach((x) => { if (x >= mesHoje() && x < c.mesAlvo) o[x] = c.porMes; });
+    return o;
+  }
+  function seletorEvo(quem, opcoes) {
+    return '<div class="chips" role="group" aria-label="De quem">' + opcoes.map(([v, n]) => '<button class="chip" type="button" data-act="evo-quem" data-v="' + esc(v) + '" aria-pressed="' + (quem === v) + '">' + esc(n) + '</button>').join('') + '</div>';
+  }
+  function abasEvo() {
+    return '<div class="seg-tabs" role="tablist">' + [['hist', 'Histórico'], ['prev', 'Previsão'], ['ano', 'Ano']].map(([k, n]) => '<button type="button" role="tab" data-act="evo-modo" data-v="' + k + '" aria-selected="' + (S.evoModo === k) + '">' + n + '</button>').join('') + '</div>';
+  }
+
+  function viewPrevisao(m) {
+    const I = m.I;
+    const par = parceiro();
+    const quem = S.evoQuem === 'casal' || I.includes(S.evoQuem) ? S.evoQuem : 'casal';
+    const meses = proximosMeses(12);
+    const prevs = {}, varMedias = {}, varAtuais = {};
+    I.forEach((id) => {
+      if (id === S.uid) { prevs[id] = {}; minhaProjecao(meses).forEach((p) => { prevs[id][p.mes] = p; }); varMedias[id] = FL.mediaVariavel(S.meus, mesHoje()); varAtuais[id] = FL.gastoVariavel(S.meus, mesHoje()); }
+      else { const r = S.resumos[id] || {}; prevs[id] = r.prev || {}; varMedias[id] = r.varMedia || 0; varAtuais[id] = r.varAtual || 0; }
+    });
+    const serie = FL.previsao({ meses, ids: I, prevs, varMedias, varAtuais, resumos: m.resumos, conj: S.conj, fixasCasal: S.fixasCasal, mesHoje: mesHoje(), cfg: S.cfgCasal, metasPorMes: metasPorMes(meses), incluirVar: S.prevVar, quem });
+    const sel = S.evoSel != null && S.evoSel < serie.length ? S.evoSel : 0;
+    const d = serie[sel];
+    const larg = Math.max(280, Math.min(720, ($('#main') ? $('#main').clientWidth : 360) - 34));
+    const opcoes = [['casal', 'Casal'], [S.uid, 'Eu']].concat(par ? [[par.id, par.nome]] : []);
+    const negativos = serie.filter((x) => x.sobra < 0);
+    const manual = quem === S.uid && prevs[S.uid][d.mes] && prevs[S.uid][d.mes].rendaManual;
+    let h = '<section class="card">' + abasEvo() +
+      '<div><div class="eyebrow">Previsão · próximos 12 meses</div><h2>Quanto deve sobrar</h2></div>' +
+      '<div class="evo-ctrl">' + seletorEvo(quem, opcoes) +
+      '<button class="chip" type="button" data-act="prev-var" aria-pressed="' + S.prevVar + '">' + (S.prevVar ? '✓ ' : '') + 'Gastos do dia a dia</button></div>' +
+      (par && quem === par.id ? '<div class="note">' + ICON.lock + '<span>De ' + esc(par.nome) + ' aparecem só os totais previstos.</span></div>' : '') +
+      '<div class="legend"><span><b style="background:var(--s-renda)"></b>Renda prevista</span><span><b style="background:var(--s-gastos)"></b>Saídas previstas</span><span><b class="lk" style="background:var(--s-sobra)"></b>Sobra prevista</span></div>' +
+      grafico(serie.map((x) => ({ mes: x.mes, renda: x.renda, gastos: FL.r2(x.compromissos + x.variaveis), sobra: x.sobra })), sel, larg) +
+      '<div class="readout"><div class="rd-mes">' + esc(nomeMes(d.mes)) + '</div><div class="rd-grid">' +
+      '<div><span class="k"><b style="background:var(--s-renda)"></b>Renda prevista' + (manual ? ' (ajustada)' : '') + '</span><span class="v">' + fmt(d.renda) + '</span></div>' +
+      '<div><span class="k"><b style="background:var(--s-gastos)"></b>Contas, parcelas e faturas</span><span class="v">' + fmt(d.compromissos) + '</span></div>' +
+      (S.prevVar ? '<div><span class="k">Dia a dia (média)</span><span class="v">' + fmt(d.variaveis) + '</span></div>' : '') +
+      '<div><span class="k">Reservar para metas</span><span class="v">' + fmt(d.metas) + '</span></div>' +
+      '<div><span class="k"><b class="lk" style="background:var(--s-sobra)"></b>Sobra prevista</span><span class="v ' + valorCls(d.sobra) + '">' + fmt(d.sobra) + '</span></div>' +
+      '<div><span class="k">Renda comprometida</span><span class="v">' + (d.pct == null ? '—' : pct(d.pct)) + '</span></div></div>' +
+      (quem === S.uid ? '<button class="link" type="button" data-act="prev-renda" data-mes="' + d.mes + '">Ajustar minha renda prevista de ' + esc(mesCurto(d.mes)) + '</button>' : '') + '</div>' +
+      (negativos.length ? '<div class="note warn"><span>▲ Sobra prevista negativa em ' + negativos.length + (negativos.length === 1 ? ' mês' : ' meses') + ': ' + esc(negativos.slice(0, 4).map((x) => mesCurto(x.mes)).join(', ')) + (negativos.length > 4 ? '…' : '') + '.</span></div>' : '') +
+      '</section>';
+    const nf = (v) => NUM.format(v || 0);
+    h += '<section class="card"><div class="card-head"><h2>Mês a mês</h2><span class="sub">valores em R$</span></div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mês</th><th>Renda</th><th>Saídas</th><th>Metas</th><th>Sobra</th></tr></thead><tbody>' +
+      serie.map((x, i) => '<tr data-act="evo-sel" data-i="' + i + '" class="' + (i === sel ? 'sel' : '') + '"><td>' + esc(mesCurto(x.mes)) + '</td><td class="v">' + nf(x.renda) + '</td><td class="v">' + nf(x.compromissos + x.variaveis) + '</td><td class="v">' + nf(x.metas) + '</td><td class="v ' + valorCls(x.sobra) + '">' + nf(x.sobra) + '</td></tr>').join('') +
+      '</tbody></table></div><div class="hint">A previsão soma contas fixas (inclusive as que ainda vão ser lançadas), parcelas e faturas de cartão' + (S.prevVar ? ', mais a média dos gastos do dia a dia dos últimos 3 meses' : '') + '. A renda vem das receitas fixas e do que você ajustar. Metas = quanto guardar por mês para chegar à meta da viagem.</div></section>';
+    return h;
+  }
+
+  function formRendaPrev(mes) {
+    const p = minhaProjecao([mes])[0];
+    const atual = (S.rendaPrev || {})[mes];
+    const corpo = '<form id="f-rp" class="field" style="gap:14px" novalidate><p class="sub" style="margin:0">Quanto você espera receber em ' + esc(mesLongo(mes)) + '? Só você vê esse valor; a outra pessoa vê apenas os totais previstos.</p>' +
+      '<div class="money-in"><span>R$</span><input id="rp-valor" inputmode="decimal" value="' + fmtInput(p.renda) + '"></div>' +
+      '<label class="check"><input type="checkbox" id="rp-seguintes"> Usar o mesmo valor nos meses seguintes deste ano</label>' +
+      '<button class="btn block" type="submit">Salvar renda prevista</button>' +
+      (atual ? '<button class="btn ghost" type="button" id="rp-auto">Voltar ao automático (receitas fixas)</button>' : '') + '</form>';
+    abrirModal('Renda prevista', corpo, (el) => {
+      const salvar = async (mapa) => {
+        if (await escrever(() => S.db.doc('usuarios/' + S.uid + '/config/previsao').set({ renda: mapa, atualizadoEm: Date.now() }), 'Renda prevista salva')) { fecharModal(); agendarSync(); }
+      };
+      $('#f-rp', el).addEventListener('submit', (e) => {
+        e.preventDefault();
+        const v = FL.parseValor($('#rp-valor', el).value);
+        if (!(v >= 0)) return;
+        const mapa = Object.assign({}, S.rendaPrev || {});
+        mapa[mes] = v;
+        if ($('#rp-seguintes', el).checked) for (let x = FL.addMeses(mes, 1); x.slice(0, 4) === mes.slice(0, 4); x = FL.addMeses(x, 1)) mapa[x] = v;
+        salvar(mapa);
+      });
+      const auto = $('#rp-auto', el);
+      if (auto) auto.addEventListener('click', () => { const mapa = Object.assign({}, S.rendaPrev || {}); delete mapa[mes]; salvar(mapa); });
+    });
+  }
+
+  /* ---------- visão do ano ---------- */
+  function viewAno(m) {
+    const I = m.I;
+    const ano = S.evoAno || +S.mes.slice(0, 4);
+    const quem = S.evoQuem === 'casal' ? 'casal' : 'eu';
+    const lancs = quem === 'casal' ? S.conj : S.meus;
+    const desp = FL.anoCategorias(lancs, ano, (l) => l.tipo !== 'receita');
+    const mesesAno = MESES_C.map((_, i) => ano + '-' + pad(i + 1));
+    const nf = (v) => (v ? NUM.format(v) : '');
+    const soma = (arrs) => mesesAno.map((_, i) => FL.r2(arrs.reduce((t, a) => t + (a[i] || 0), 0)));
+    const linha = (rot, vals, cls) => {
+      const tm = FL.totalMedia(vals);
+      return '<tr class="' + (cls || '') + '"><td>' + rot + '</td>' + vals.map((v) => '<td class="v">' + nf(v) + '</td>').join('') + '<td class="v tot">' + nf(tm.total) + '</td><td class="v">' + nf(tm.media) + '</td></tr>';
+    };
+    let corpo = '';
+    const blocos = [];
+    catalogo().grupos.filter((g) => g.id !== 'receitas').forEach((g) => {
+      const cs = Object.keys(desp).filter((k) => (cat(k).grupo || 'outros') === g.id);
+      if (!cs.length) return;
+      corpo += '<tr class="grp"><td colspan="15">' + esc(g.nome) + '</td></tr>';
+      cs.sort((a, b) => FL.totalMedia(desp[b]).total - FL.totalMedia(desp[a]).total).forEach((k) => { corpo += linha(cat(k).ico + ' ' + esc(cat(k).nome), desp[k]); });
+      const sub = soma(cs.map((k) => desp[k]));
+      blocos.push(sub);
+      corpo += linha('Subtotal ' + esc(g.nome), sub, 'subtot');
+    });
+    let parte = null;
+    if (quem === 'eu' && I.length === 2) {
+      parte = mesesAno.map((mm) => FL.conjuntoMes(S.conj, mm, I, FL.divisao(mm, I, m.resumos, S.cfgCasal).pct).parte[S.uid] || 0);
+      if (parte.some((v) => v)) { corpo += linha('👥 Minha parte no casal', parte, 'subtot'); blocos.push(parte); }
+    }
+    const totalDesp = soma(blocos);
+    corpo += linha('TOTAL DE DESPESAS', totalDesp, 'total');
+    if (quem === 'eu') {
+      const rec = FL.anoCategorias(S.meus, ano, (l) => l.tipo === 'receita');
+      const totRec = soma(Object.values(rec));
+      corpo += linha('Receitas', totRec, 'subtot');
+      corpo += linha('Saldo', totRec.map((v, i) => FL.r2(v - totalDesp[i])), 'total');
+      corpo += '<tr class="subtot"><td>% comprometido</td>' + totRec.map((v, i) => '<td class="v">' + (v ? pct(totalDesp[i] / v) : '') + '</td>').join('') + '<td class="v tot">' + (FL.totalMedia(totRec).total ? pct(FL.totalMedia(totalDesp).total / FL.totalMedia(totRec).total) : '') + '</td><td></td></tr>';
+    }
+    let h = '<section class="card">' + abasEvo() +
+      '<div class="card-head"><div><div class="eyebrow">Visão do ano</div><h2>Por categoria</h2></div>' +
+      '<div class="ano-nav"><button class="icon-btn" type="button" data-act="evo-ano" data-v="' + (ano - 1) + '" aria-label="Ano anterior">' + ICON.left + '</button><b>' + ano + '</b><button class="icon-btn" type="button" data-act="evo-ano" data-v="' + (ano + 1) + '" aria-label="Próximo ano">' + ICON.right + '</button></div></div>' +
+      seletorEvo(quem === 'casal' ? 'casal' : S.uid, [[S.uid, 'Eu'], ['casal', 'Casal']]) +
+      (Object.keys(desp).length ? '<div class="tbl-wrap"><table class="tbl tbl-ano"><thead><tr><th>Categoria</th>' + MESES_C.map((n) => '<th>' + n + '</th>').join('') + '<th>Total</th><th>Média</th></tr></thead><tbody>' + corpo + '</tbody></table></div>' +
+        '<div class="hint">Valores em R$. Média = média dos meses com valor, como na planilha. Compras no cartão entram no mês da fatura.</div>'
+        : '<div class="empty">Nenhuma despesa ' + (quem === 'casal' ? 'do casal ' : '') + 'em ' + ano + '.</div>') + '</section>';
+    // comparativo com o ano anterior
+    const quemEvo = quem === 'casal' ? 'casal' : S.uid;
+    const atual = FL.evolucao(mesesAno, I, m.resumos, S.conj, S.cofre, S.cfgCasal, quemEvo);
+    const ant = FL.evolucao(mesesAno.map((x) => FL.addMeses(x, -12)), I, m.resumos, S.conj, S.cofre, S.cfgCasal, quemEvo);
+    if (atual.some((x) => x.gastos) || ant.some((x) => x.gastos)) {
+      const tA = FL.r2(atual.reduce((t, x) => t + x.gastos, 0)), tB = FL.r2(ant.reduce((t, x) => t + x.gastos, 0));
+      h += '<section class="card"><div class="card-head"><h2>' + ano + ' x ' + (ano - 1) + '</h2><span class="sub">gastos por mês, em R$</span></div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mês</th><th>' + ano + '</th><th>' + (ano - 1) + '</th><th>Variação</th><th>%</th></tr></thead><tbody>' +
+        atual.map((x, i) => {
+          const b = ant[i].gastos, dv = FL.r2(x.gastos - b);
+          return '<tr><td>' + MESES_C[i] + '</td><td class="v">' + nf(x.gastos) + '</td><td class="v">' + nf(b) + '</td><td class="v ' + (dv > 0 ? 'neg' : dv < 0 ? 'pos' : '') + '">' + (x.gastos && b ? (dv > 0 ? '+' : '') + NUM.format(dv) : '') + '</td><td class="v">' + (x.gastos && b ? (dv > 0 ? '+' : '') + pct(dv / b) : '') + '</td></tr>';
+        }).join('') +
+        '<tr class="total"><td>Ano</td><td class="v">' + nf(tA) + '</td><td class="v">' + nf(tB) + '</td><td class="v">' + (tA && tB ? (tA - tB > 0 ? '+' : '') + NUM.format(FL.r2(tA - tB)) : '') + '</td><td class="v">' + (tA && tB ? pct((tA - tB) / tB) : '') + '</td></tr></tbody></table></div>' +
+        '<div class="hint">A comparação só fica justa nos meses em que os dois anos têm lançamentos.</div></section>';
+    }
+    return h;
+  }
+
+  /* ---------- fechamento do mês ---------- */
+  let textoRelatorio = '';
+  const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* sem armazenamento */ } };
+  function cardFechamento() {
+    const hoje = hojeISO();
+    if (+hoje.slice(8) > 10 || S.mes !== mesHoje()) return '';
+    const ant = FL.addMeses(mesHoje(), -1);
+    if (lsGet('fech-' + ant)) return '';
+    const m = modelo(ant);
+    if (!m.meusMes.length && !m.conj.itens.length) return '';
+    return '<section class="card fech-card"><div class="card-head"><div><div class="eyebrow">Fechamento do mês</div><h2>' + esc(nomeMes(ant)) + ' fechou</h2></div></div>' +
+      '<p class="sub" style="margin:0">Veja quanto sobrou, os maiores gastos, o orçamento e o acerto do casal.</p>' +
+      '<div class="btn-row"><button class="btn" type="button" data-act="fechamento" data-mes="' + ant + '">Ver relatório</button><button class="btn ghost" type="button" data-act="fech-dispensar" data-mes="' + ant + '">Dispensar</button></div></section>';
+  }
+  function relatorioMes(mes) {
+    const at = modelo(mes), an = modelo(FL.addMeses(mes, -1));
+    const nomeAnt = MESES_C[+FL.addMeses(mes, -1).slice(5) - 1];
+    const dl = (a, b, inverso) => {
+      if (!b) return '';
+      const d = (a - b) / Math.abs(b);
+      if (Math.abs(d) < 0.005) return '<span class="tag">= ' + nomeAnt + '</span>';
+      const ruim = inverso ? d < 0 : d > 0;
+      return '<span class="tag ' + (ruim ? 'neg' : 'pos') + '">' + (d > 0 ? '▲ ' : '▼ ') + pct(Math.abs(d)) + ' vs ' + nomeAnt + '</span>';
+    };
+    const eu = at.cartoes[S.uid] || FL.cartaoPessoa(null, 0, 0);
+    const euA = an.cartoes[S.uid] || FL.cartaoPessoa(null, 0, 0);
+    const gastos = FL.r2(eu.gastos + eu.parte), gastosA = FL.r2(euA.gastos + euA.parte);
+    const topo = FL.porCategoria(at.meusMes, (l) => l.tipo !== 'receita').slice(0, 5);
+    const antCat = {}; FL.porCategoria(an.meusMes, (l) => l.tipo !== 'receita').forEach(([k, v]) => { antCat[k] = v; });
+    const pend = at.meusMes.filter((l) => l.tipo !== 'receita' && l.status === 'pendente').concat(at.conj.itens.filter((l) => l.autor === S.uid && l.status === 'pendente'));
+    const reg = S.acertos[mes];
+    const ac = at.conj.acerto;
+    const guard = (at.cof.noMes[mes] || {})[S.uid] || 0;
+    const linhas = [];
+    linhas.push('📊 Fechamento de ' + mesLongo(mes));
+    linhas.push('Renda: ' + fmt(eu.renda) + ' | Gastos: ' + fmt(gastos) + ' | Guardado: ' + fmt(eu.guardado) + ' | Sobra: ' + fmt(eu.saldo));
+    if (topo.length) linhas.push('Maiores gastos: ' + topo.slice(0, 3).map(([k, v]) => cat(k).nome + ' ' + fmt(v)).join(', '));
+    if (at.conj.total) linhas.push('Casal: ' + fmt(at.conj.total) + (ac ? ' | Acerto: ' + pessoa(ac.de).nome + ' → ' + pessoa(ac.para).nome + ' ' + fmt(ac.valor) : ''));
+    textoRelatorio = linhas.join('\n');
+    let h = '<div class="rel-hero"><div class="sub">Sobra livre</div><div class="money-big ' + valorCls(eu.saldo) + '">' + fmt(eu.saldo) + '</div>' + dl(eu.saldo, euA.saldo, true) + '</div>' +
+      '<div class="rows">' +
+      '<div class="rowkv"><span class="k">Renda</span><span class="v">' + fmt(eu.renda) + '</span></div>' +
+      '<div class="rowkv"><span class="k">Gastos (pessoais + parte no casal)</span><span class="v">' + fmt(gastos) + ' ' + dl(gastos, gastosA) + '</span></div>' +
+      '<div class="rowkv"><span class="k">Guardado para metas</span><span class="v">' + fmt(eu.guardado) + '</span></div>' +
+      (eu.pctComprometido != null ? '<div class="rowkv"><span class="k">Renda comprometida</span><span class="v">' + pct(eu.pctComprometido) + '</span></div>' : '') + '</div>';
+    if (topo.length) {
+      h += '<h3 class="rel-h">Maiores gastos</h3><div class="rows">' + topo.map(([k, v]) => '<div class="rowkv"><span class="k">' + cat(k).ico + ' ' + esc(cat(k).nome) + '</span><span class="v">' + fmt(v) + ' ' + dl(v, antCat[k] || 0) + '</span></div>').join('') + '</div>';
+    }
+    if (at.orcMeu.total) {
+      const est = at.orcMeu.linhas.filter((l) => l.status === 'estourou');
+      h += '<h3 class="rel-h">Orçamento</h3><div class="rows"><div class="rowkv"><span class="k">Categorias com limite</span><span class="v">' + fmt(at.orcMeu.total.gasto) + ' de ' + fmt(at.orcMeu.total.limite) + '</span></div>' +
+        (est.length ? '<div class="note warn"><span>▲ Passaram do limite: ' + esc(est.map((l) => cat(l.cat).nome + ' (' + fmt(-l.sobra) + ')').join(', ')) + '</span></div>' : '<div class="note pos"><span>✓ Todas as categorias ficaram dentro do limite.</span></div>') + '</div>';
+    }
+    if (at.conj.total) {
+      h += '<h3 class="rel-h">Casal</h3><div class="rows"><div class="rowkv"><span class="k">Despesas do casal</span><span class="v">' + fmt(at.conj.total) + ' ' + dl(at.conj.total, an.conj.total) + '</span></div>' +
+        (ac ? '<div class="rowkv"><span class="k">Acerto: ' + esc(pessoa(ac.de).nome) + ' → ' + esc(pessoa(ac.para).nome) + '</span><span class="v">' + fmt(ac.valor) + ' ' + (reg && reg.quitado ? '<span class="tag pos">✓ feito</span>' : '<span class="tag warn">● pendente</span>') + '</span></div>' : '') + '</div>';
+    }
+    if (pend.length) h += '<div class="note warn"><span>Ficaram ' + pend.length + ' contas suas marcadas como “a pagar” em ' + esc(MESES[+mes.slice(5) - 1]) + ' (' + fmt(pend.reduce((t, l) => t + l.valor, 0)) + ').</span></div>';
+    if (guard) h += '<div class="note"><span>🐷 Você guardou ' + fmt(guard) + ' para as metas neste mês.</span></div>';
+    h += '<div class="btn-row"><button class="btn" type="button" data-act="copiar-relatorio">Copiar resumo</button><button class="btn ghost" type="button" data-act="ir-mes" data-mes="' + mes + '" data-tab="meus">Ver lançamentos</button></div>';
+    lsSet('fech-' + mes, '1');
+    abrirModal('Fechamento de ' + mesLongo(mes), h);
   }
 
   /* ---------- eventos ---------- */
@@ -1548,6 +1766,14 @@ import { DB, Conta } from './firebase-shim.js';
     else if (act === 'evo-quem') { S.evoQuem = el.dataset.v; S.evoSel = null; render(); }
     else if (act === 'evo-n') { S.evoN = +el.dataset.v; S.evoSel = null; render(); }
     else if (act === 'evo-sel') { S.evoSel = +el.dataset.i; render(); }
+    else if (act === 'evo-modo') { S.evoModo = el.dataset.v; S.evoSel = null; if (S.evoModo === 'ano' && S.evoQuem !== 'casal') S.evoQuem = S.uid; render(); }
+    else if (act === 'evo-ano') { S.evoAno = +el.dataset.v; render(); }
+    else if (act === 'prev-var') { S.prevVar = !S.prevVar; render(); }
+    else if (act === 'prev-renda') formRendaPrev(el.dataset.mes);
+    else if (act === 'fechamento') relatorioMes(el.dataset.mes);
+    else if (act === 'fech-dispensar') { lsSet('fech-' + el.dataset.mes, '1'); render(); }
+    else if (act === 'copiar-relatorio') { try { await navigator.clipboard.writeText(textoRelatorio); toast('Resumo copiado'); } catch (x) { toast('Não consegui copiar neste aparelho.'); } }
+    else if (act === 'ir-mes') { fecharModal(); S.mes = el.dataset.mes; location.hash = el.dataset.tab; render(); }
     else if (act === 'trocar-senha') formSenha();
     else if (act === 'sair') { fecharModal(); await Conta.sair(); }
     else if (act === 'acerto-ok') {
@@ -1647,7 +1873,7 @@ import { DB, Conta } from './firebase-shim.js';
       S.got[chave] = true;
       if (!snap.metadata.fromCache) S.firm[chave] = true;
       if (S.got.membros && S.got.meus) clearTimeout(timer);
-      if (chave === 'meus' || chave === 'resumos') agendarSync();
+      if (['meus', 'resumos', 'fixas', 'cartoes', 'limites'].includes(chave)) agendarSync();
       if (chave === 'meus' || chave === 'fixas' || chave === 'conj' || chave === 'fixasCasal' || chave === 'membros' || chave === 'cartoes') agendarFixas();
       render();
     }, (err) => {
@@ -1663,7 +1889,7 @@ import { DB, Conta } from './firebase-shim.js';
     ouvintes.forEach((p) => { try { p(); } catch (e) { /* ignora */ } });
     ouvintes = [];
     clearTimeout(timer);
-    Object.assign(S, { uid: null, email: '', meus: [], conj: [], cofre: [], membros: {}, resumos: {}, cfgCasal: {}, viagem: null, acertos: {}, fixas: [], fixasCasal: [], limites: {}, limitesCasal: {}, cartoes: [], catalogo: null, evoSel: null, got: {}, firm: {}, timeout: false });
+    Object.assign(S, { uid: null, email: '', meus: [], conj: [], cofre: [], membros: {}, resumos: {}, cfgCasal: {}, viagem: null, acertos: {}, fixas: [], fixasCasal: [], limites: {}, limitesCasal: {}, cartoes: [], catalogo: null, rendaPrev: {}, evoSel: null, got: {}, firm: {}, timeout: false });
     reindexarCats();
     tentados.clear();
     fecharModal();
@@ -1681,7 +1907,7 @@ import { DB, Conta } from './firebase-shim.js';
     ouvir(fixasCol(), 'fixas', (s) => { S.fixas = lista(s); });
     ouvir(db.collection('usuarios/' + S.uid + '/cartoes'), 'cartoes', (s) => { S.cartoes = lista(s).sort((a, b) => (a.criadoEm || 0) - (b.criadoEm || 0)); });
     ouvir(db.collection('fixasCasal'), 'fixasCasal', (s) => { S.fixasCasal = lista(s); });
-    ouvir(db.collection('usuarios/' + S.uid + '/config'), 'limites', (s) => { S.limites = {}; s.docs.forEach((d) => { if (d.id === 'limites') S.limites = d.data().limites || {}; }); });
+    ouvir(db.collection('usuarios/' + S.uid + '/config'), 'limites', (s) => { S.limites = {}; S.rendaPrev = {}; s.docs.forEach((d) => { if (d.id === 'limites') S.limites = d.data().limites || {}; if (d.id === 'previsao') S.rendaPrev = d.data().renda || {}; }); });
     ouvir(db.collection('acertos'), 'acertos', (s) => { const o = {}; s.docs.forEach((d) => { o[d.id] = d.data(); }); S.acertos = o; });
   }
 

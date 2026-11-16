@@ -308,6 +308,107 @@
     });
   }
 
-  const api = { r2, pad, mesDe, addMeses, difMeses, diasNoMes, addMesesData, parseValor, gerarSerie, resumoPessoal, stable, divisao, pctItem, conjuntoMes, cofrinho, cartaoPessoa, porCategoria, idFixa, fixasAGerar, orcamento, evolucao, mesFatura, vencFatura, normalizar };
+  /* ---------- previsão ---------- */
+  /* Média dos gastos do dia a dia (sem contas fixas e sem parcelas) nos 3 meses anteriores */
+  function mediaVariavel(lancs, mesHoje) {
+    const meses = [1, 2, 3].map((i) => addMeses(mesHoje, -i));
+    const soma = {};
+    meses.forEach((m) => { soma[m] = 0; });
+    for (const l of lancs || []) {
+      if (!l || !(l.mes in soma) || l.tipo === 'receita' || l.fixaId || l.grupo || !(l.valor > 0)) continue;
+      soma[l.mes] += l.valor;
+    }
+    const comDados = meses.filter((m) => soma[m] > 0);
+    return comDados.length ? r2(comDados.reduce((t, m) => t + soma[m], 0) / comDados.length) : 0;
+  }
+
+  /* Gastos do dia a dia já lançados num mês (sem contas fixas e sem parcelas) */
+  function gastoVariavel(lancs, mes) {
+    return r2((lancs || []).filter((l) => l && l.mes === mes && l.tipo !== 'receita' && !l.fixaId && !l.grupo && l.valor > 0).reduce((t, l) => t + l.valor, 0));
+  }
+
+  /* Projeção de uma pessoa: lançamentos já existentes + contas fixas que ainda vão ser lançadas.
+     cartoes: {id: {fechamento, vencimento}}; rendaManual: {AAAA-MM: valor} substitui a renda do mês. */
+  function projecao(lancs, fixas, meses, mesHoje, cartoes, rendaManual) {
+    const set = new Set(meses);
+    const r = {};
+    meses.forEach((m) => { r[m] = { renda: 0, despesas: 0 }; });
+    for (const l of lancs || []) {
+      if (!l || !set.has(l.mes) || !(l.valor > 0)) continue;
+      if (l.tipo === 'receita') r[l.mes].renda += l.valor; else r[l.mes].despesas += l.valor;
+    }
+    const exist = new Set((lancs || []).map((l) => l.id));
+    for (const g of fixasAGerar(fixas, exist, meses[meses.length - 1], mesHoje)) {
+      const f = g.fixa;
+      let m = g.mes;
+      const c = f.pag === 'cartao' && cartoes ? cartoes[f.cartaoId] : null;
+      if (c) m = mesFatura(g.data, c.fechamento, c.vencimento);
+      if (!set.has(m)) continue;
+      if (f.tipo === 'receita') r[m].renda += f.valor; else r[m].despesas += f.valor;
+    }
+    return meses.map((m) => {
+      const manual = rendaManual && rendaManual[m] > 0 ? rendaManual[m] : null;
+      return { mes: m, renda: r2(manual != null ? manual : r[m].renda), despesas: r2(r[m].despesas), rendaManual: manual != null };
+    });
+  }
+
+  /* Previsão do casal ou de uma pessoa (quem = 'casal' ou id), a partir das projeções que cada um publica */
+  function previsao(o) {
+    const { meses, ids, prevs, varMedias, resumos, conj, fixasCasal, mesHoje, cfg, metasPorMes, incluirVar, quem } = o;
+    const varAtuais = o.varAtuais || {};
+    const virt = fixasAGerar(fixasCasal || [], new Set((conj || []).map((l) => l.id)), meses[meses.length - 1], mesHoje)
+      .map((g) => ({ autor: g.fixa.autor, valor: g.fixa.valor, mes: g.mes, divisao: g.fixa.divisao }));
+    const conjAll = (conj || []).concat(virt);
+    const varCasal = incluirVar ? mediaVariavel(conj, mesHoje) : 0;
+    const varCasalAtual = gastoVariavel(conj, mesHoje);
+    const res = {};
+    ids.forEach((id) => {
+      const meses2 = Object.assign({}, (resumos[id] && resumos[id].meses) || {});
+      for (const m in (prevs[id] || {})) meses2[m] = Object.assign({}, meses2[m] || {}, { renda: prevs[id][m].renda });
+      res[id] = { meses: meses2 };
+    });
+    return meses.map((m) => {
+      const div = divisao(m, ids, res, cfg);
+      const cj = conjuntoMes(conjAll, m, ids, div.pct);
+      const quemIds = quem === 'casal' ? ids : [quem];
+      let renda = 0, comp = 0, vari = 0, metas = 0;
+      for (const id of quemIds) {
+        const p = (prevs[id] || {})[m] || {};
+        renda += p.renda || 0;
+        comp += (p.despesas || 0) + (cj.parte[id] || 0);
+        if (incluirVar) {
+          /* no mês atual, só o que ainda falta gastar em relação à média (o que já foi gasto já está nas despesas) */
+          const pess = m === mesHoje ? Math.max(0, (varMedias[id] || 0) - (varAtuais[id] || 0)) : (varMedias[id] || 0);
+          const cas = m === mesHoje ? Math.max(0, varCasal - varCasalAtual) : varCasal;
+          vari += pess + cas * (div.pct[id] || 0);
+        }
+        if (quem !== 'casal') metas += ((metasPorMes || {})[m] || 0) * (div.pct[id] || 0);
+      }
+      if (quem === 'casal') metas = (metasPorMes || {})[m] || 0;
+      renda = r2(renda); comp = r2(comp); vari = r2(vari); metas = r2(metas);
+      const sobra = r2(renda - comp - vari - metas);
+      return { mes: m, renda, compromissos: comp, variaveis: vari, metas, sobra, pct: renda > 0 ? (comp + vari) / renda : null };
+    });
+  }
+
+  /* ---------- visão do ano ---------- */
+  function anoCategorias(lancs, ano, filtro) {
+    const linhas = {};
+    for (const l of lancs || []) {
+      if (!l || !l.mes || l.mes.slice(0, 4) !== String(ano) || !(l.valor > 0) || (filtro && !filtro(l))) continue;
+      const i = +l.mes.slice(5) - 1;
+      (linhas[l.cat] = linhas[l.cat] || new Array(12).fill(0))[i] += l.valor;
+    }
+    for (const c in linhas) linhas[c] = linhas[c].map(r2);
+    return linhas;
+  }
+  /* Total e média (média só dos meses com valor, como a planilha) */
+  function totalMedia(vals) {
+    const t = r2(vals.reduce((a, b) => a + b, 0));
+    const n = vals.filter((v) => v).length;
+    return { total: t, media: n ? r2(t / n) : 0 };
+  }
+
+  const api = { r2, pad, mesDe, addMeses, difMeses, diasNoMes, addMesesData, parseValor, gerarSerie, resumoPessoal, stable, divisao, pctItem, conjuntoMes, cofrinho, cartaoPessoa, porCategoria, idFixa, fixasAGerar, orcamento, evolucao, mesFatura, vencFatura, normalizar, mediaVariavel, gastoVariavel, projecao, previsao, anoCategorias, totalMedia };
   root.FL = api;
 })(typeof window !== 'undefined' ? window : globalThis);
