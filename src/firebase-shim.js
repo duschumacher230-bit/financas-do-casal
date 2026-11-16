@@ -6,7 +6,7 @@ import {
 } from 'firebase/auth';
 import {
   initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot,
+  collection, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch,
 } from 'firebase/firestore';
 import { firebaseConfig } from './config.js';
 
@@ -49,9 +49,20 @@ function refCol(c) {
     }), err),
   };
 }
+/* Várias gravações de uma vez (importação): em lotes de até 400 */
+async function lote(ops) {
+  for (let i = 0; i < ops.length; i += 400) {
+    const b = writeBatch(fs);
+    for (const o of ops.slice(i, i + 400)) {
+      if (o.tipo === 'delete') b.delete(doc(fs, o.path)); else b.set(doc(fs, o.path), o.data);
+    }
+    await ate(b.commit());
+  }
+}
 export const DB = {
   doc: (p) => refDoc(doc(fs, p)),
   collection: (p) => refCol(collection(fs, p)),
+  lote,
 };
 
 export const Conta = {

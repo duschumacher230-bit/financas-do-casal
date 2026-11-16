@@ -329,6 +329,21 @@ nav.tabs a { font-size: 11px; }
 .rd-acts { display: flex; gap: 16px; justify-content: flex-end; font-size: 13px; }
 .btn.gravando { background: color-mix(in srgb, var(--neg) 16%, transparent); color: var(--neg); }
 textarea.input { resize: vertical; min-height: 84px; font-family: var(--font-body); line-height: 1.4; }
+.lista-sub { margin: 0; padding-left: 18px; display: grid; gap: 6px; color: var(--muted); font-size: 14px; }
+.lista-sub strong { color: var(--ink); font-weight: 600; }
+.imp-meses { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; max-height: 300px; overflow: auto; padding: 2px; }
+.imp-mes { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: start; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; font-size: 13px; line-height: 1.35; cursor: pointer; background: var(--bg); }
+.imp-mes input { margin-top: 2px; width: 18px; height: 18px; accent-color: var(--accent); }
+.imp-mes .sub { font-size: 12px; }
+.imp-mes .pill { font-size: 10px; padding: 1px 6px; }
+.imp-mes:has(input:checked) { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); background: var(--accent-soft); }
+.warn-t { color: var(--warn) !important; font-weight: 600; }
+.imp-atalhos { display: flex; gap: 12px; font-size: 13px; }
+.imp-cats { display: grid; gap: 8px; }
+.imp-cat { display: grid; gap: 4px; }
+.imp-cat .t { font-size: 13px; font-weight: 600; }
+.imp-cat .input { font-size: 14px; padding: 8px 10px; }
+@media (max-width: 360px) { .imp-meses { grid-template-columns: 1fr; } }
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(150px + env(safe-area-inset-bottom)); z-index: 30; background: var(--ink); color: var(--surface); padding: 10px 16px; border-radius: 12px; font-size: 14px; font-weight: 600; max-width: calc(100% - 32px); box-shadow: var(--shadow); }
 .banner { border-radius: 12px; padding: 10px 12px; background: color-mix(in srgb, var(--warn) 14%, var(--surface)); color: var(--ink); font-size: 13px; border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); }
 .center-screen { min-height: 70vh; display: grid; place-items: center; }
@@ -351,6 +366,6 @@ textarea.input { resize: vertical; min-height: 84px; font-family: var(--font-bod
 <div id="modal"></div>
 <div id="toast"></div>
 
-<script type="module" src="app.js?v=mwjqppry"></script>
+<script type="module" src="app.js?v=mwjr2im5"></script>
 </body>
 </html>

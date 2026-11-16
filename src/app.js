@@ -993,7 +993,8 @@ import { DB, Conta } from './firebase-shim.js';
         '<div class="field" id="w-fixo"' + (modo === 'fixo' ? '' : ' hidden') + '><label for="c-fixo">Parte de ' + esc(a.nome) + ' (%)</label><input class="input" type="number" id="c-fixo" min="0" max="100" step="1" value="' + fixoA + '" inputmode="numeric"><div class="hint" id="c-fixo-b"></div></div></div>' : '') +
       '<div class="note">' + ICON.lock + '<span>Lançamentos “Só meu” ficam numa área do banco que só a sua conta acessa. A outra pessoa vê apenas os seus totais do mês (renda, gastos e a pagar).</span></div>' +
       '<div class="err" id="c-err" hidden></div><button class="btn block" type="submit">Salvar</button>' +
-      '<div class="field" style="border-top:1px solid var(--line);padding-top:14px"><span>Organização</span><div class="btn-row"><button class="btn ghost" type="button" data-act="categorias">Categorias</button><button class="btn ghost" type="button" data-act="cartao-novo">Novo cartão</button></div></div>' +
+      '<div class="field" style="border-top:1px solid var(--line);padding-top:14px"><span>Organização</span><div class="btn-row"><button class="btn ghost" type="button" data-act="categorias">Categorias</button><button class="btn ghost" type="button" data-act="cartao-novo">Novo cartão</button></div>' +
+      '<div class="btn-row"><button class="btn ghost" type="button" data-act="importar">📥 Importar planilha</button><button class="btn ghost" type="button" data-act="exportar">📤 Exportar Excel</button></div></div>' +
       '<div class="field" style="border-top:1px solid var(--line);padding-top:14px"><span>Sua conta</span><div class="sub">' + esc(S.email) + '</div>' +
       '<div class="btn-row"><button class="btn ghost" type="button" data-act="trocar-senha">Alterar senha</button><button class="btn danger" type="button" data-act="sair">Sair do app</button></div></div></form>';
     abrirModal('Configurações', corpo, (el) => {
@@ -1944,7 +1945,7 @@ import { DB, Conta } from './firebase-shim.js';
         mic.textContent = '● Ouvindo… toque para parar'; mic.classList.add('gravando');
         try { rec.start(); } catch (e) { rec = null; mic.textContent = '🎙️ Falar'; mic.classList.remove('gravando'); }
       });
-      el.addEventListener('click', (e) => {
+      $('.sheet', el).addEventListener('click', (e) => {
         const b = e.target.closest('[data-act^="rp-"]'); if (!b) return;
         e.stopPropagation();
         const i = +b.dataset.i;
@@ -1958,6 +1959,315 @@ import { DB, Conta } from './firebase-shim.js';
     });
   }
   const botaoRapido = () => (S.canWrite !== false ? '<button class="quick" type="button" data-act="rapido"><span>⚡</span><span>Lançar rápido: “mercado 230 casal”, “uber 25 ontem”…</span><span class="mic">🎙️</span></button>' : '');
+
+  /* ---------- importar planilha ---------- */
+  let imp = null;
+  const chaveCatImp = (it) => it.tipo + '|' + FL.normalizar(it.nome);
+  const ehImportado = (l) => l.origem === 'importado';
+  async function lerArquivo(file) {
+    const nome = (file.name || '').toLowerCase();
+    if (/\.csv$|\.txt$/.test(nome) || file.type === 'text/csv') return [{ sheet: file.name.replace(/\.[^.]+$/, ''), data: FL.lerCSV(await file.text()) }];
+    if (/\.xls$/.test(nome)) throw new Error('xls');
+    const { default: readXlsxFile } = await import('read-excel-file/browser');
+    return readXlsxFile(file);
+  }
+  function formImportar() {
+    const nImp = S.meus.filter(ehImportado).length + S.conj.filter((l) => ehImportado(l) && l.autor === S.uid).length;
+    const corpo = '<div class="field" style="gap:14px">' +
+      '<p class="sub" style="margin:0">Traga o histórico da sua planilha. O app entende dois formatos:</p>' +
+      '<ul class="lista-sub"><li><strong>📅 Controle anual</strong> — categorias nas linhas, meses nas colunas</li><li><strong>📋 Lista</strong> — colunas Data, Descrição, Valor…</li></ul>' +
+      '<p class="sub" style="margin:0">Na planilha anual, a aba de Resumo com a receita também é aproveitada. Antes de importar você vê tudo e escolhe os meses e as categorias.</p>' +
+      '<label class="btn block" for="imp-arq" style="cursor:pointer">Escolher arquivo (.xlsx ou .csv)</label><input type="file" id="imp-arq" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>' +
+      '<div class="err" id="imp-err" hidden></div>' +
+      (nImp ? '<div class="field" style="border-top:1px solid var(--line);padding-top:14px"><span class="sub">Você tem ' + nImp + ' lançamento' + (nImp === 1 ? '' : 's') + ' que veio de planilha.</span><button class="btn danger" type="button" id="imp-desfazer">Remover lançamentos importados</button></div>' : '') +
+      '</div>';
+    abrirModal('Importar planilha', corpo, (el) => {
+      const inp = $('#imp-arq', el), err = $('#imp-err', el);
+      inp.addEventListener('change', async () => {
+        const file = inp.files && inp.files[0];
+        if (!file) return;
+        err.hidden = true;
+        const lbl = el.querySelector('label[for=imp-arq]'); lbl.textContent = 'Lendo ' + file.name + '…';
+        try {
+          const abas = await lerArquivo(file);
+          const res = FL.lerPlanilha(abas, { hoje: hojeISO() });
+          if (!res.itens.length && !res.resumo.length) throw new Error('vazio');
+          imp = { res, nomeArq: file.name, destino: 'meu' };
+          previewImport();
+        } catch (e) {
+          console.warn(e);
+          lbl.textContent = 'Escolher arquivo (.xlsx ou .csv)'; inp.value = '';
+          err.hidden = false;
+          err.textContent = e && e.message === 'xls' ? 'Esse é o formato antigo (.xls). Abra no Excel e salve como .xlsx.' : e && e.message === 'vazio' ? 'Não encontrei valores nesse arquivo. Confira se é a planilha de controle (meses nas colunas) ou uma lista com Data, Descrição e Valor.' : 'Não consegui ler esse arquivo. Confira se é .xlsx ou .csv.';
+        }
+      });
+      const d = $('#imp-desfazer', el);
+      if (d) d.addEventListener('click', async () => {
+        if (!d.dataset.armed) { d.dataset.armed = '1'; d.textContent = 'Toque de novo: apaga os ' + nImp + ' lançamentos importados'; return; }
+        d.disabled = true;
+        const ops = S.meus.filter(ehImportado).map((l) => ({ tipo: 'delete', path: 'usuarios/' + S.uid + '/lancamentos/' + l.id }))
+          .concat(S.conj.filter((l) => ehImportado(l) && l.autor === S.uid).map((l) => ({ tipo: 'delete', path: 'conjunto/' + l.id })));
+        if (await escrever(() => S.db.lote(ops), nImp + ' lançamentos removidos')) { fecharModal(); agendarSync(); }
+      });
+    });
+  }
+
+  function previewImport() {
+    const res = imp.res;
+    const hoje = mesHoje();
+    const fonteApp = () => (imp.destino === 'casal' ? S.conj : S.meus).filter((l) => !ehImportado(l));
+    const meses = [...new Set(res.itens.map((i) => i.mes).concat(res.resumo.map((r) => r.mes)))].sort();
+    const porMes = {};
+    meses.forEach((m) => { porMes[m] = { desp: 0, rec: 0, n: 0 }; });
+    res.itens.forEach((i) => { const p = porMes[i.mes]; p.n++; if (i.tipo === 'receita') p.rec += i.valor; else p.desp += i.valor; });
+    const noApp = (m) => fonteApp().filter((l) => l.mes === m).length;
+    const sel = imp.sel || (imp.sel = new Set(meses.filter((m) => m < hoje && !noApp(m))));
+    const cats = catalogo().cats;
+    const nomes = [];
+    const vistos = {};
+    res.itens.forEach((i) => { if (!i.nome) return; const k = chaveCatImp(i); if (!vistos[k]) { vistos[k] = { k, nome: i.nome, grupo: i.grupo, tipo: i.tipo, meses: new Set() }; nomes.push(vistos[k]); } vistos[k].meses.add(i.mes); });
+    imp.mapa = imp.mapa || {};
+    nomes.forEach((x) => { if (!imp.mapa[x.k]) imp.mapa[x.k] = FL.sugerirCat(x.nome, x.grupo, x.tipo, cats); });
+    if (res.resumo.length && !imp.mapa['rec|']) imp.mapa['rec|'] = FL.sugerirCat('Receita', '', 'receita', cats);
+    const optsCat = (tipo, val) => gruposDe(tipo).map(({ g, cats: cs }) => '<optgroup label="' + esc(g.nome) + '">' + cs.map((c) => '<option value="' + c.id + '"' + (c.id === val ? ' selected' : '') + '>' + c.ico + ' ' + esc(c.nome) + '</option>').join('') + '</optgroup>').join('');
+    const formatoTxt = { grade: 'controle anual', resumo: 'receitas por mês', lista: 'lista de lançamentos' };
+    const futuros = res.resumo.filter((r) => r.mes >= hoje);
+    const corpo = '<div class="field" style="gap:14px" id="imp-prev">' +
+      '<div class="note"><span>📄 <strong>' + esc(imp.nomeArq) + '</strong><br>' + res.abas.map((a) => esc(a.nome) + ': ' + (a.formato ? formatoTxt[a.formato] + ' (' + a.n + ')' : 'ignorada')).join(' · ') + '</span></div>' +
+      res.avisos.map((a) => '<div class="note warn"><span>' + esc(a) + '</span></div>').join('') +
+      (casal().length === 2 ? '<div class="field"><span>Importar como</span>' + seg('imp-dest', [['meu', '🔒 Meus lançamentos'], ['casal', '👥 Despesas do casal']], imp.destino) + '</div>' : '') +
+      '<div class="field"><div class="rowkv"><span>Meses</span><span class="imp-atalhos"><button class="link" type="button" data-imp="passados">Só passados</button><button class="link" type="button" data-imp="todos">Todos</button><button class="link" type="button" data-imp="nenhum">Nenhum</button></span></div>' +
+      '<div class="imp-meses">' + meses.map((m) => {
+        const p = porMes[m], r = res.resumo.find((x) => x.mes === m), na = noApp(m);
+        return '<label class="imp-mes"><input type="checkbox" data-mes="' + m + '"' + (sel.has(m) ? ' checked' : '') + '><span><strong>' + esc(mesCurto(m)) + '</strong>' + (m >= hoje ? ' <span class="pill">a pagar</span>' : '') + '<br><span class="sub">' + (p.desp ? fmt(p.desp) + ' · ' + p.n + ' ite' + (p.n === 1 ? 'm' : 'ns') : 'sem despesas') + (r ? '<br>+ ' + fmt(r.valor) + ' receita' : '') + '</span>' + (na ? '<br><span class="sub warn-t">já tem ' + na + ' no app</span>' : '') + '</span></label>';
+      }).join('') + '</div>' +
+      '<div class="hint">Meses marcados com “já tem no app” ficam desmarcados para não duplicar. Mês atual e futuros entram como “a pagar” — se essas contas já estão como fixas ou no cartão, deixe desmarcado.</div></div>' +
+      (res.resumo.length ? '<div class="field" id="imp-rec-box"><span>Receitas (aba de resumo)</span>' +
+        '<label class="check"><input type="checkbox" id="imp-rec" checked> Lançar a receita dos meses marcados como</label>' +
+        '<select class="input" id="imp-rec-cat">' + optsCat('receita', imp.mapa['rec|']) + '</select>' +
+        (futuros.length ? '<label class="check"><input type="checkbox" id="imp-prev-renda" checked> Usar a receita prevista de ' + futuros.length + ' ' + (futuros.length === 1 ? 'mês' : 'meses') + ' (' + esc(mesCurto(futuros[0].mes)) + ' em diante) na Previsão</label>' : '') + '</div>' : '') +
+      (nomes.length ? '<div class="field"><span>Categorias</span><div class="hint" style="margin-top:-4px">Confira para onde vai cada linha da planilha.</div><div class="imp-cats">' + nomes.map((x) =>
+        '<div class="imp-cat" data-k="' + esc(x.k) + '"><div class="t">' + esc(x.nome) + (x.grupo ? '<span class="sub"> · ' + esc(x.grupo.toLowerCase()) + '</span>' : '') + '</div><select class="input" data-cat="' + esc(x.k) + '">' + optsCat(x.tipo, imp.mapa[x.k]) + '</select></div>').join('') + '</div></div>' : '') +
+      '<div class="note" id="imp-total"></div>' +
+      '<button class="btn block" type="button" id="imp-ok">Importar</button>' +
+      '<div class="hint">Importar a mesma planilha de novo atualiza os valores, sem duplicar.</div></div>';
+    abrirModal('Importar planilha', corpo, (el) => {
+      const atualizar = () => {
+        if (casal().length === 2) imp.destino = radio(el, 'imp-dest') || 'meu';
+        const rb = $('#imp-rec-box', el); if (rb) rb.hidden = imp.destino === 'casal';
+        $$('.imp-cat', el).forEach((d) => { const x = vistos[d.dataset.k]; d.hidden = ![...x.meses].some((m) => sel.has(m)) || (imp.destino === 'casal' && x.tipo === 'receita'); });
+        const ops = montarOps();
+        const n = ops.lanc.length;
+        const desp = FL.r2(ops.lanc.filter((o) => o.data.tipo !== 'receita').reduce((s, o) => s + o.data.valor, 0));
+        const rec = FL.r2(ops.lanc.filter((o) => o.data.tipo === 'receita').reduce((s, o) => s + o.data.valor, 0));
+        const ja = ops.lanc.filter((o) => (imp.destino === 'casal' ? S.conj : S.meus).some((l) => l.id === o.path.split('/').pop())).length;
+        $('#imp-total', el).innerHTML = '<span>' + (n ? 'Vai ' + (ja === n ? 'atualizar ' : 'criar ') + '<strong>' + n + ' lançamento' + (n === 1 ? '' : 's') + '</strong>: ' + fmt(desp) + ' em despesas' + (rec ? ' e ' + fmt(rec) + ' em receitas' : '') + (ja && ja < n ? ' (' + ja + ' já importados serão atualizados)' : '') + '.' : 'Marque pelo menos um mês.') + (ops.prev ? ' A Previsão recebe a renda de ' + ops.prevN + ' ' + (ops.prevN === 1 ? 'mês' : 'meses') + '.' : '') + '</span>';
+        $('#imp-ok', el).disabled = !n && !ops.prev;
+      };
+      $('.sheet', el).addEventListener('change', (e) => {
+        const t = e.target;
+        if (t.dataset.mes) { if (t.checked) sel.add(t.dataset.mes); else sel.delete(t.dataset.mes); }
+        if (t.dataset.cat) imp.mapa[t.dataset.cat] = t.value;
+        if (t.id === 'imp-rec-cat') imp.mapa['rec|'] = t.value;
+        if (t.name === 'imp-dest') { imp.destino = t.value; imp.sel = null; imp.sel = new Set(meses.filter((m) => m < hoje && !(t.value === 'casal' ? S.conj : S.meus).filter((l) => !ehImportado(l) && l.mes === m).length)); return previewImport(); }
+        atualizar();
+      });
+      $('.sheet', el).addEventListener('click', (e) => {
+        const b = e.target.closest('[data-imp]'); if (!b) return;
+        sel.clear();
+        if (b.dataset.imp === 'todos') meses.forEach((m) => sel.add(m));
+        if (b.dataset.imp === 'passados') meses.filter((m) => m < hoje).forEach((m) => sel.add(m));
+        $$('input[data-mes]', el).forEach((c) => { c.checked = sel.has(c.dataset.mes); });
+        atualizar();
+      });
+      $('#imp-ok', el).addEventListener('click', async () => {
+        const ops = montarOps();
+        const b = $('#imp-ok', el); b.disabled = true; b.textContent = 'Importando…';
+        const todas = ops.lanc.concat(ops.prev ? [ops.prev] : []);
+        if (await escrever(() => S.db.lote(todas), ops.lanc.length ? ops.lanc.length + ' lançamentos importados' : 'Previsão atualizada')) {
+          const dest = imp.destino;
+          imp = null; fecharModal(); agendarSync();
+          const mesMax = ops.lanc.map((o) => o.data.mes).filter((m) => m < hoje).sort().pop();
+          if (mesMax) { S.mes = mesMax; location.hash = dest === 'casal' ? 'casal' : 'meus'; }
+          render();
+        } else { b.disabled = false; b.textContent = 'Importar'; }
+      });
+      atualizar();
+    });
+  }
+
+  function montarOps() {
+    const res = imp.res, hoje = mesHoje(), casalD = imp.destino === 'casal';
+    const sel = imp.sel;
+    const base = casalD ? 'conjunto/' : 'usuarios/' + S.uid + '/lancamentos/';
+    const cats = catalogo().cats;
+    const agora = Date.now();
+    const lanc = [];
+    const mk = (it, catId, status) => ({
+      kind: 'lanc', tipo: it.tipo, desc: it.desc, valor: it.valor, cat: catId, data: it.data, mes: it.mes, status, parcela: null, grupo: null,
+      autor: S.uid, criadoEm: agora, pag: null, cartaoId: null, divisao: casalD ? 'padrao' : null, origem: 'importado', importAba: it.aba,
+    });
+    for (const it of res.itens) {
+      if (!sel.has(it.mes) || (casalD && it.tipo === 'receita')) continue;
+      const catId = it.nome ? imp.mapa[chaveCatImp(it)] : FL.sugerirCat(it.desc, '', it.tipo, cats);
+      lanc.push({ path: base + FL.idImport(it.chave), data: mk(it, catId, it.status || (it.mes < hoje ? 'pago' : 'pendente')) });
+    }
+    const chk = (id) => { const e = document.getElementById(id); return e ? e.checked : true; };
+    if (!casalD && res.resumo.length && chk('imp-rec')) {
+      for (const r of res.resumo) {
+        if (!sel.has(r.mes)) continue;
+        lanc.push({ path: base + FL.idImport(r.chave), data: mk({ tipo: 'receita', desc: 'Receita (planilha)', valor: r.valor, data: r.mes + '-01', mes: r.mes, aba: r.aba }, imp.mapa['rec|'], r.mes < hoje ? 'pago' : 'pendente') });
+      }
+    }
+    let prev = null, prevN = 0;
+    if (!casalD && document.getElementById('imp-prev-renda') && chk('imp-prev-renda')) {
+      const mapa = Object.assign({}, S.rendaPrev || {});
+      res.resumo.filter((r) => r.mes >= hoje).forEach((r) => { mapa[r.mes] = r.valor; prevN++; });
+      if (prevN) prev = { path: 'usuarios/' + S.uid + '/config/previsao', data: { renda: mapa, atualizadoEm: agora } };
+    }
+    return { lanc, prev, prevN };
+  }
+
+  /* ---------- exportar para Excel ---------- */
+  function formExportar() {
+    const anos = [...new Set(S.meus.concat(S.conj).map((l) => l.mes && l.mes.slice(0, 4)).filter(Boolean).concat([mesHoje().slice(0, 4)]))].sort();
+    const corpo = '<form id="f-exp" class="field" style="gap:14px" novalidate>' +
+      '<p class="sub" style="margin:0">Gera um arquivo Excel com as suas finanças:</p>' +
+      '<ul class="lista-sub"><li><strong>Resumo do ano</strong> — renda, gastos e sobra por mês</li><li><strong>Controle do ano</strong> — categorias × meses, como a sua planilha</li><li><strong>Meus lançamentos</strong> — todos, com data e situação</li>' +
+      (casal().length === 2 ? '<li><strong>Casal</strong> — despesas do casal e a sua parte</li>' : '') + '<li><strong>Metas</strong> — metas e movimentações</li></ul>' +
+      '<div class="field"><label for="exp-ano">Ano do resumo e do controle</label><select class="input" id="exp-ano">' + anos.map((a) => '<option' + (a === S.mes.slice(0, 4) ? ' selected' : '') + '>' + a + '</option>').join('') + '</select></div>' +
+      '<div class="note">' + ICON.lock + '<span>O arquivo leva os seus lançamentos pessoais. Da outra pessoa vão só as despesas do casal.</span></div>' +
+      '<div class="err" id="exp-err" hidden></div><button class="btn block" type="submit">Baixar planilha (.xlsx)</button></form>';
+    abrirModal('Exportar para Excel', corpo, (el) => {
+      $('#f-exp', el).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const b = el.querySelector('button[type=submit]'); b.disabled = true; b.textContent = 'Gerando…';
+        try {
+          await exportarXlsx($('#exp-ano', el).value);
+          fecharModal(); toast('Planilha gerada');
+        } catch (er) {
+          console.warn(er);
+          const x = $('#exp-err', el); x.hidden = false; x.textContent = 'Não consegui gerar o arquivo. Tente de novo.';
+          b.disabled = false; b.textContent = 'Baixar planilha (.xlsx)';
+        }
+      });
+    });
+  }
+
+  async function exportarXlsx(ano) {
+    const { default: writeXlsxFile } = await import('write-excel-file/browser');
+    const AZUL = '#1F3A5F';
+    const H = (v) => ({ value: v, fontWeight: 'bold', textColor: '#FFFFFF', backgroundColor: AZUL });
+    const T = (v, extra) => Object.assign({ value: v == null ? '' : String(v), type: String }, extra || {});
+    const N = (v, extra) => Object.assign({ value: Number(v) || 0, type: Number, format: '#,##0.00' }, extra || {});
+    const P = (v) => (v == null ? T('') : { value: v, type: Number, format: '0.0%' });
+    const D = (iso) => { const [y, m, d] = String(iso).split('-').map(Number); return y && m && d ? { value: new Date(Date.UTC(y, m - 1, d)), type: Date, format: 'dd/mm/yyyy' } : T(iso); };
+    const B = { fontWeight: 'bold' };
+    const SUB = { fontWeight: 'bold', backgroundColor: '#E8EEF6' };
+    const mesesAno = Array.from({ length: 12 }, (_, i) => ano + '-' + pad(i + 1));
+    const eu = pessoa(S.uid);
+    const sheets = [];
+
+    // 1) Resumo
+    const mods = mesesAno.map((m) => modelo(m));
+    const resumo = [[H('MÊS'), H('RENDA'), H('MEUS GASTOS'), H('MINHA PARTE NO CASAL'), H('GUARDADO'), H('SOBRA'), H('% COMPROMETIDO')]];
+    const tot = { renda: 0, gastos: 0, parte: 0, guardado: 0, saldo: 0 };
+    mods.forEach((md, i) => {
+      const c = md.cartoes[S.uid] || FL.cartaoPessoa(null, 0, 0);
+      Object.keys(tot).forEach((k) => { tot[k] += c[k] || 0; });
+      resumo.push([T(MESES_C[i][0].toUpperCase() + MESES_C[i].slice(1) + '/' + ano.slice(2)), N(c.renda), N(c.gastos), N(c.parte), N(c.guardado), N(c.saldo), P(c.pctComprometido)]);
+    });
+    resumo.push([T('TOTAL DO ANO', B), N(tot.renda, B), N(tot.gastos, B), N(tot.parte, B), N(tot.guardado, B), N(tot.saldo, B), P(tot.renda > 0 ? (tot.gastos + tot.parte) / tot.renda : null)]);
+    sheets.push({ sheet: 'Resumo ' + ano, data: resumo, columns: [{ width: 16 }, { width: 14 }, { width: 14 }, { width: 22 }, { width: 13 }, { width: 14 }, { width: 16 }], stickyRowsCount: 1 });
+
+    // 2) Controle (categorias × meses)
+    const desp = FL.anoCategorias(S.meus, ano, (l) => l.tipo !== 'receita');
+    const recs = FL.anoCategorias(S.meus, ano, (l) => l.tipo === 'receita');
+    const cab = [H('CATEGORIA')].concat(MESES_C.map((m) => H(m[0].toUpperCase() + m.slice(1))), [H('TOTAL ANO'), H('MÉDIA MÊS')]);
+    const ctrl = [[T('CONTROLE FINANCEIRO — ' + eu.nome.toUpperCase() + ' — ' + ano, { fontWeight: 'bold', fontSize: 13 })], [], cab];
+    const linhaVals = (rot, vals, estilo) => { const tm = FL.totalMedia(vals); return [T(rot, estilo)].concat(vals.map((v) => (v ? N(v, estilo) : T('', estilo))), [N(tm.total, estilo || B), N(tm.media, estilo)]); };
+    const geral = new Array(12).fill(0);
+    catalogo().grupos.filter((g) => g.id !== 'receitas').forEach((g) => {
+      const cs = catalogo().cats.filter((c) => c.grupo === g.id && desp[c.id]);
+      if (!cs.length) return;
+      ctrl.push([T(g.nome.toUpperCase(), B)]);
+      const sub = new Array(12).fill(0);
+      cs.forEach((c) => { ctrl.push(linhaVals(c.nome, desp[c.id])); desp[c.id].forEach((v, i) => { sub[i] += v; }); });
+      ctrl.push(linhaVals('Subtotal ' + g.nome, sub.map(FL.r2), SUB));
+      sub.forEach((v, i) => { geral[i] += v; });
+    });
+    const outrasCats = Object.keys(desp).filter((k) => !catalogo().cats.some((c) => c.id === k && c.grupo !== 'receitas'));
+    if (outrasCats.length) {
+      ctrl.push([T('OUTRAS', B)]);
+      outrasCats.forEach((k) => { ctrl.push(linhaVals(cat(k).nome, desp[k])); desp[k].forEach((v, i) => { geral[i] += v; }); });
+    }
+    if (casal().length === 2) {
+      const parte = mods.map((md) => FL.r2(md.conj.parte[S.uid] || 0));
+      ctrl.push([T('CASAL', B)]);
+      ctrl.push(linhaVals('Minha parte nas despesas do casal', parte));
+      parte.forEach((v, i) => { geral[i] += v; });
+    }
+    ctrl.push(linhaVals('TOTAL GERAL DO MÊS', geral.map(FL.r2), { fontWeight: 'bold', backgroundColor: '#FDE7DC' }));
+    const recTot = new Array(12).fill(0);
+    if (Object.keys(recs).length) {
+      ctrl.push([], [T('RECEITAS', B)]);
+      Object.keys(recs).forEach((k) => { ctrl.push(linhaVals(cat(k).nome, recs[k])); recs[k].forEach((v, i) => { recTot[i] += v; }); });
+      ctrl.push(linhaVals('TOTAL DE RECEITAS', recTot.map(FL.r2), { fontWeight: 'bold', backgroundColor: '#DDF3EA' }));
+    }
+    sheets.push({ sheet: 'Controle ' + ano, data: ctrl, columns: [{ width: 34 }].concat(Array(12).fill({ width: 11 }), [{ width: 13 }, { width: 12 }]), stickyRowsCount: 3, stickyColumnsCount: 1 });
+
+    // 3) Meus lançamentos
+    const pagNome = (l) => (l.pag === 'cartao' ? '💳 ' + ((cartaoDe(l.cartaoId) || {}).nome || 'Cartão') : l.pag ? (PAGS.find((p) => p[0] === l.pag) || [0, l.pag])[1] : '');
+    const meus = S.meus.slice().sort((a, b) => a.data.localeCompare(b.data) || (a.criadoEm || 0) - (b.criadoEm || 0));
+    sheets.push({
+      sheet: 'Meus lançamentos', stickyRowsCount: 1,
+      columns: [{ width: 12 }, { width: 9 }, { width: 32 }, { width: 24 }, { width: 20 }, { width: 10 }, { width: 13 }, { width: 11 }, { width: 18 }, { width: 9 }],
+      data: [[H('DATA'), H('MÊS'), H('DESCRIÇÃO'), H('CATEGORIA'), H('GRUPO'), H('TIPO'), H('VALOR'), H('SITUAÇÃO'), H('PAGAMENTO'), H('PARCELA')]].concat(meus.map((l) => {
+        const c = cat(l.cat); const g = catalogo().grupos.find((x) => x.id === c.grupo);
+        return [D(l.data), T(mesCurto(l.mes)), T(l.desc), T(c.nome), T(g ? g.nome : ''), T(l.tipo === 'receita' ? 'Receita' : 'Despesa'), N(l.valor, l.tipo === 'receita' ? { textColor: '#199E70' } : {}), T(l.status === 'pendente' ? (l.tipo === 'receita' ? 'A receber' : 'A pagar') : (l.tipo === 'receita' ? 'Recebida' : 'Paga')), T(pagNome(l)), T(l.parcela || '')];
+      })),
+    });
+
+    // 4) Casal
+    if (casal().length === 2) {
+      const I = ids();
+      const conj = S.conj.slice().sort((a, b) => a.data.localeCompare(b.data));
+      const resCache = {};
+      const pctMes = (m) => resCache[m] || (resCache[m] = modelo(m).div.pct);
+      const par = parceiro();
+      sheets.push({
+        sheet: 'Casal', stickyRowsCount: 1,
+        columns: [{ width: 12 }, { width: 9 }, { width: 32 }, { width: 24 }, { width: 13 }, { width: 14 }, { width: 22 }, { width: 13 }, { width: 13 }, { width: 11 }],
+        data: [[H('DATA'), H('MÊS'), H('DESCRIÇÃO'), H('CATEGORIA'), H('VALOR'), H('LANÇADO POR'), H('DIVISÃO'), H('MINHA PARTE'), H('PARTE DE ' + (par ? par.nome.toUpperCase() : 'OUTRO')), H('SITUAÇÃO')]].concat(conj.map((l) => {
+          const p = FL.pctItem(l, I, pctMes(l.mes));
+          const minha = FL.r2(l.valor * (p[S.uid] || 0));
+          return [D(l.data), T(mesCurto(l.mes)), T(l.desc), T(cat(l.cat).nome), N(l.valor), T(pessoa(l.autor).nome), T(textoDivisao(l) || 'padrão do casal'), N(minha), N(FL.r2(l.valor - minha)), T(l.status === 'pendente' ? 'A pagar' : 'Paga')];
+        })),
+      });
+    }
+
+    // 5) Metas
+    const lm = todasMetas();
+    const metas = [[H('META'), H('DE QUEM'), H('VALOR DA META'), H('PRAZO'), H('GUARDADO'), H('FALTA'), H('POR MÊS ATÉ O PRAZO')]].concat(lm.map((mt) => {
+      const c = calcMeta(mt);
+      return [T(mt.nome), T(mt.escopo === 'casal' ? 'Casal' : 'Minha'), N(c.meta), T(c.mesAlvo ? mesCurto(c.mesAlvo) : 'sem prazo'), N(c.guardado), N(c.falta), c.mesesRestantes > 0 && c.falta > 0 ? N(c.porMes) : T('')];
+    }));
+    metas.push([], [H('DATA'), H('META'), H('QUEM'), H('MOVIMENTO'), H('VALOR'), H('OBSERVAÇÃO')]);
+    lm.forEach((mt) => movsDe(mt).forEach((x) => metas.push([D(x.data), T(mt.nome), T(pessoa(mt.escopo === 'casal' ? x.autor : S.uid).nome), T(x.tipo === 'retirada' ? 'Retirada' : 'Guardou'), N(x.tipo === 'retirada' ? -x.valor : x.valor), T(x.obs || '')])));
+    sheets.push({ sheet: 'Metas', data: metas, columns: [{ width: 26 }, { width: 14 }, { width: 15 }, { width: 14 }, { width: 14 }, { width: 18 }, { width: 20 }] });
+
+    const nomeArq = 'Financas-do-Casal-' + ano + '-' + hojeISO() + '.xlsx';
+    const arq = writeXlsxFile(sheets, { fontFamily: 'Calibri', fontSize: 11 });
+    if (window.__EXPORT_TESTE) { window.__EXPORT_TESTE(sheets, await arq.toBlob()); return; }
+    const blob = await arq.toBlob();
+    const file = typeof File === 'function' ? new File([blob], nomeArq, { type: blob.type }) : null;
+    if (file && navigator.canShare && navigator.canShare({ files: [file] }) && /iPhone|iPad|Android/i.test(navigator.userAgent)) {
+      try { await navigator.share({ files: [file], title: nomeArq }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = nomeArq; document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 2000);
+  }
 
   /* ---------- eventos ---------- */
   document.addEventListener('click', async (e) => {
@@ -1993,6 +2303,8 @@ import { DB, Conta } from './firebase-shim.js';
     else if (act === 'meta-nova') formMeta(el.dataset.esc);
     else if (act === 'meta-editar') { const mt = acharMeta(el.dataset.id, el.dataset.esc); if (mt) formMeta(el.dataset.esc, mt); }
     else if (act === 'rapido') formRapido(false);
+    else if (act === 'importar') formImportar();
+    else if (act === 'exportar') formExportar();
     else if (act === 'busca-limpar') { S.busca = { q: '', onde: 'tudo', periodo: '12', status: 'todas', tipo: 'todos', cat: '', pag: '' }; $('#main').innerHTML = ''; render(); }
     else if (act === 'config') formConfig();
     else if (act === 'limites') formLimites(el.dataset.esc);

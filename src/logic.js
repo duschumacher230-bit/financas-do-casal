@@ -407,7 +407,7 @@
     ['iptu', ['iptu']],
     ['saude', ['farmacia', 'remedio', 'medico', 'consulta', 'exame', 'dentista', 'plano de saude', 'hospital', 'drogaria']],
     ['academia', ['academia', 'suplemento', 'whey']],
-    ['esportes', ['muay thai', 'muay', 'jiu', 'luta', 'futebol', 'crossfit', 'natacao']],
+    ['esportes', ['muay thai', 'muay', 'muya', 'jiu', 'luta', 'futebol', 'crossfit', 'natacao']],
     ['cuidados', ['cabelo', 'barbearia', 'barbeiro', 'salao', 'unha', 'manicure', 'perfume', 'estetica']],
     ['lazer', ['cinema', 'show', 'bar', 'balada', 'festa', 'lazer', 'passeio', 'ingresso', 'cerveja']],
     ['compras', ['roupa', 'tenis', 'loja', 'shopping', 'amazon', 'shopee', 'mercado livre', 'magalu', 'calcado', 'camisa']],
@@ -540,6 +540,183 @@
     return { total: t, media: n ? r2(t / n) : 0 };
   }
 
-  const api = { r2, pad, mesDe, addMeses, difMeses, diasNoMes, addMesesData, parseValor, gerarSerie, resumoPessoal, stable, divisao, pctItem, conjuntoMes, cofrinho, cartaoPessoa, porCategoria, idFixa, fixasAGerar, orcamento, evolucao, mesFatura, vencFatura, normalizar, mediaVariavel, gastoVariavel, projecao, previsao, anoCategorias, totalMedia, interpretar, dividirTexto };
+
+  /* ---------- importar planilha ---------- */
+  const MESES_N = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const ano4 = (a) => (String(a).length === 2 ? '20' + a : String(a));
+  function mesDoRotulo(v, anoPadrao) {
+    if (v instanceof Date && !isNaN(v)) return v.getUTCFullYear() + '-' + pad(v.getUTCMonth() + 1);
+    const t = normalizar(v).replace(/\s+/g, ' ');
+    let m;
+    if ((m = t.match(/^(\d{4})-(\d{1,2})(?:-\d{1,2})?$/)) && +m[2] >= 1 && +m[2] <= 12) return m[1] + '-' + pad(+m[2]);
+    if ((m = t.match(/^(\d{1,2})\/(\d{4}|\d{2})$/)) && +m[1] >= 1 && +m[1] <= 12) return ano4(m[2]) + '-' + pad(+m[1]);
+    if ((m = t.match(/^([a-z]{3})[a-z]*\.?(?:\s*[/\-\s]\s*(?:de\s+)?(\d{4}|\d{2}))?$/))) {
+      const i = MESES_N.indexOf(m[1]);
+      if (i >= 0) { const a = m[2] ? ano4(m[2]) : anoPadrao; return a ? a + '-' + pad(i + 1) : '?-' + pad(i + 1); }
+    }
+    return null;
+  }
+  function numCel(v) {
+    if (typeof v === 'number') return isFinite(v) ? r2(v) : NaN;
+    if (v == null || v instanceof Date || typeof v === 'boolean') return NaN;
+    let t = String(v).trim();
+    const neg = /^-|^\(.*\)$|-$/.test(t.replace(/^r\$\s*/i, ''));
+    t = t.replace(/[()\-]/g, '');
+    const n = parseValor(t);
+    return isNaN(n) ? NaN : neg ? -n : n;
+  }
+  function dataCel(v, anoPadrao) {
+    if (v instanceof Date && !isNaN(v)) return v.getUTCFullYear() + '-' + pad(v.getUTCMonth() + 1) + '-' + pad(v.getUTCDate());
+    if (typeof v === 'number' && v > 20000 && v < 80000) { const d = new Date(Math.round((v - 25569) * 864e5)); return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()); }
+    const t = String(v == null ? '' : v).trim();
+    let m;
+    if ((m = t.match(/^(\d{4})-(\d{2})-(\d{2})/))) return m[1] + '-' + m[2] + '-' + m[3];
+    if ((m = t.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/))) {
+      const a = m[3] ? ano4(m[3]) : anoPadrao;
+      if (!a || +m[2] < 1 || +m[2] > 12) return null;
+      return a + '-' + pad(+m[2]) + '-' + pad(Math.min(+m[1], diasNoMes(+a, +m[2])));
+    }
+    return null;
+  }
+  const texto = (v) => (v == null ? '' : v instanceof Date ? '' : String(v)).replace(/\s+/g, ' ').trim();
+  const PULAR = /^(sub\s*-?\s*total|total|media|obs|saldo|maior|menor|legenda|% |percentual|comprometido)/;
+  function anoDaAba(nome, linhas) {
+    let m = String(nome || '').match(/\b(20\d{2})\b/);
+    if (m) return m[1];
+    for (const r of linhas.slice(0, 6)) for (const c of r || []) { m = texto(c).match(/\b(20\d{2})\b/); if (m) return m[1]; }
+    return null;
+  }
+
+  /* abas: [{ sheet: 'nome', data: [[...], ...] }] (formato do read-excel-file) */
+  function lerPlanilha(abas, ctx) {
+    ctx = ctx || {};
+    const itens = [], resumo = [], avisos = [];
+    for (const aba of abas || []) {
+      const L = (aba.data || []).map((r) => r || []);
+      const nomeAba = String(aba.sheet || 'Planilha');
+      const ano = anoDaAba(nomeAba, L);
+      let formato = null, n = 0;
+      const cab = L.slice(0, 15).map((r) => r.map((c) => normalizar(texto(c))));
+      // 1) lista de lançamentos (colunas Data/Descrição/Valor…)
+      const hL = cab.findIndex((r) => r.some((c) => /^valor/.test(c)) && r.some((c) => /^(data|vencimento|descri|historico|lancamento|item)/.test(c)));
+      // 2) resumo vertical (MÊS | RECEITA…)
+      const hR = cab.findIndex((r) => r.some((c) => /^mes\b|^competencia/.test(c)) && r.some((c) => /receita|renda|entrada/.test(c)));
+      // 3) grade categorias × meses
+      const hG = cab.findIndex((r) => r.filter((c) => c && mesDoRotulo(c, '2000') && /[a-z]/.test(c)).length >= 6);
+      if (hL >= 0) {
+        formato = 'lista';
+        const h = cab[hL];
+        const col = (re) => h.findIndex((c) => re.test(c));
+        const cD = col(/^(data|vencimento|dia)/), cDesc = col(/^(descri|historico|lancamento|item|nome|estabelecimento)/), cV = col(/^valor/);
+        const cCat = col(/^categoria/), cTipo = col(/^(tipo|natureza|entrada.?saida|e\/s)/), cSit = col(/^(situa|status|pago|quitado)/), cPag = col(/^(pagamento|forma|meio|conta|cartao)/), cMes = col(/^(mes|competencia)/);
+        const vs = L.slice(hL + 1).map((r) => numCel(r[cV])).filter((v) => v && !isNaN(v));
+        const extrato = vs.filter((v) => v < 0).length >= Math.max(1, vs.length * 0.4); // estilo extrato: negativo = saída
+        const cont = {};
+        L.slice(hL + 1).forEach((r, i) => {
+          let v = numCel(r[cV]);
+          if (!v || isNaN(v)) return;
+          let data = cD >= 0 ? dataCel(r[cD], ano) : null;
+          let mes = cMes >= 0 ? mesDoRotulo(r[cMes], ano) : null;
+          if (!data && mes && !mes.startsWith('?')) data = mes + '-01';
+          if (!data) return;
+          if (!mes || mes.startsWith('?')) mes = data.slice(0, 7);
+          const tp = cTipo >= 0 ? normalizar(texto(r[cTipo])) : '';
+          let tipo = /receita|entrada|credito|recebid|^c$|^e$|^\+/.test(tp) ? 'receita' : /despesa|saida|debito|gasto|^d$|^s$|^-/.test(tp) ? 'despesa' : extrato ? (v > 0 ? 'receita' : 'despesa') : (v < 0 ? 'receita' : 'despesa');
+          v = Math.abs(v);
+          const sit = cSit >= 0 ? normalizar(texto(r[cSit])) : '';
+          const status = sit ? (/pend|aberto|a pagar|a receber|nao|^n$|falta/.test(sit) ? 'pendente' : 'pago') : (ctx.hoje && data > ctx.hoje ? 'pendente' : 'pago');
+          const desc = texto(cDesc >= 0 ? r[cDesc] : '') || texto(cCat >= 0 ? r[cCat] : '') || 'Lançamento';
+          const nome = cCat >= 0 ? texto(r[cCat]) : '';
+          const chave = [nomeAba, data, normalizar(desc), v].join('|');
+          cont[chave] = (cont[chave] || 0) + 1;
+          itens.push({ aba: nomeAba, origem: 'lista', nome, grupo: '', mes, data, desc, valor: v, tipo, status, pagNome: cPag >= 0 ? texto(r[cPag]) : '', chave: chave + '|' + cont[chave] });
+          n++;
+        });
+      } else if (hR >= 0) {
+        formato = 'resumo';
+        const h = cab[hR];
+        const cM = h.findIndex((c) => /^mes\b|^competencia/.test(c)), cRec = h.findIndex((c) => /receita|renda|entrada/.test(c));
+        L.slice(hR + 1).forEach((r) => {
+          const mes = mesDoRotulo(r[cM], ano);
+          const v = numCel(r[cRec]);
+          if (!mes || mes.startsWith('?') || !(v > 0)) return;
+          resumo.push({ aba: nomeAba, mes, valor: v, chave: [nomeAba, 'receita', mes].join('|') });
+          n++;
+        });
+      } else if (hG >= 0) {
+        formato = 'grade';
+        const h = L[hG];
+        const cols = [];
+        h.forEach((c, j) => { const t = normalizar(texto(c)); const m = t && /[a-z]/.test(t) ? mesDoRotulo(t, ano) : null; if (m) cols.push([j, m]); });
+        if (cols.some(([, m]) => m.startsWith('?'))) avisos.push('Não achei o ano da aba "' + nomeAba + '". Coloque o ano no nome da aba (ex.: Controle 2026).');
+        const cLab = Math.max(0, cols[0][0] - 1);
+        let grupo = '';
+        const cont = {};
+        L.slice(hG + 1).forEach((r) => {
+          const lab = texto(r[cLab]);
+          if (!lab) return;
+          const nl = normalizar(lab);
+          if (PULAR.test(nl)) return;
+          const vals = cols.map(([j, m]) => [m, numCel(r[j])]).filter(([, v]) => v && !isNaN(v));
+          if (!vals.length) { if (lab === lab.toUpperCase() && /[A-ZÀ-Ú]/.test(lab)) grupo = lab; return; }
+          if (vals.some(([m]) => m.startsWith('?'))) return;
+          const tipo = /receita|renda|salario|entrada|recebi/.test(normalizar(grupo + ' ' + lab)) ? 'receita' : 'despesa';
+          vals.forEach(([mes, v]) => {
+            const chave = [nomeAba, normalizar(lab), mes].join('|');
+            cont[chave] = (cont[chave] || 0) + 1;
+            itens.push({ aba: nomeAba, origem: 'grade', nome: lab, grupo, mes, data: mes + '-01', desc: lab, valor: Math.abs(v), tipo, status: null, chave: chave + (cont[chave] > 1 ? '|' + cont[chave] : '') });
+            n++;
+          });
+        });
+      }
+      aba.formato = formato; aba.n = n;
+    }
+    return { itens, resumo, avisos, abas: (abas || []).map((a) => ({ nome: a.sheet, formato: a.formato || null, n: a.n || 0 })) };
+  }
+
+
+  /* CSV simples (separador ; , ou tab; aspas) → linhas */
+  function lerCSV(txt) {
+    txt = String(txt || '').replace(/^﻿/, '');
+    const l1 = txt.split(/\r?\n/)[0] || '';
+    const sep = [';', '\t', ','].map((c) => [c, l1.split(c).length]).sort((a, b) => b[1] - a[1])[0][0];
+    const rows = [];
+    let row = [], cel = '', q = false;
+    for (let i = 0; i < txt.length; i++) {
+      const c = txt[i];
+      if (q) { if (c === '"') { if (txt[i + 1] === '"') { cel += '"'; i++; } else q = false; } else cel += c; continue; }
+      if (c === '"') q = true;
+      else if (c === sep) { row.push(cel); cel = ''; }
+      else if (c === '\n' || c === '\r') { if (c === '\r' && txt[i + 1] === '\n') i++; row.push(cel); rows.push(row); row = []; cel = ''; }
+      else cel += c;
+    }
+    if (cel || row.length) { row.push(cel); rows.push(row); }
+    return rows.map((r) => r.map((x) => { const t = x.trim(); return t === '' ? null : /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : t; }));
+  }
+
+  /* Sugere a categoria do app para o nome de uma linha da planilha */
+  function sugerirCat(nome, grupo, tipo, cats) {
+    const n = normalizar(nome).replace(/\(.*?\)/g, ' ').replace(/[^a-z0-9/ ]/g, ' ').replace(/\s+/g, ' ').trim();
+    const g = normalizar(grupo);
+    const lista = (cats || []).filter((c) => !c.oculta && (tipo === 'receita' ? c.grupo === 'receitas' : c.grupo !== 'receitas'));
+    const tem = (id) => lista.some((c) => c.id === id);
+    if (tipo !== 'receita' && (/\bcart(ao|oes)|fatura/.test(n) || /cart(ao|oes)/.test(g)) && tem('cartao')) return 'cartao';
+    const nn = (c) => normalizar(c.nome).replace(/[^a-z0-9/ ]/g, ' ').replace(/\s+/g, ' ').trim();
+    let c = lista.find((x) => nn(x) === n) || lista.find((x) => n.length >= 4 && (nn(x).startsWith(n + ' ') || n.startsWith(nn(x) + ' ') || nn(x).startsWith(n + '/')));
+    if (c) return c.id;
+    const t = normalizar(nome);
+    for (const [id, ws] of (tipo === 'receita' ? KW_REC : KW)) if (tem(id) && ws.some((w) => temPalavra(t, w))) return id;
+    if (tipo === 'receita') return tem('salario') ? 'salario' : (lista[0] || {}).id || 'extra';
+    return tem('outros') ? 'outros' : (lista[0] || {}).id || 'outros';
+  }
+  /* id estável para não duplicar ao importar a mesma planilha de novo */
+  function idImport(chave) {
+    let h1 = 5381, h2 = 52711;
+    const s = String(chave);
+    for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); h1 = (h1 * 33) ^ c; h2 = (h2 * 31) ^ c; }
+    return 'imp_' + (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36);
+  }
+
+  const api = { r2, pad, mesDe, addMeses, difMeses, diasNoMes, addMesesData, parseValor, gerarSerie, resumoPessoal, stable, divisao, pctItem, conjuntoMes, cofrinho, cartaoPessoa, porCategoria, idFixa, fixasAGerar, orcamento, evolucao, mesFatura, vencFatura, normalizar, mediaVariavel, gastoVariavel, projecao, previsao, anoCategorias, totalMedia, interpretar, dividirTexto, mesDoRotulo, numCel, dataCel, lerPlanilha, sugerirCat, idImport, lerCSV };
   root.FL = api;
 })(typeof window !== 'undefined' ? window : globalThis);

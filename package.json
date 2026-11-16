@@ -7,7 +7,9 @@
     "test": "node src/logic.test.js"
   },
   "dependencies": {
-    "firebase": "13.1.0"
+    "firebase": "13.1.0",
+    "read-excel-file": "9.3.17",
+    "write-excel-file": "4.1.1"
   },
   "devDependencies": {
     "esbuild": "0.24.2"

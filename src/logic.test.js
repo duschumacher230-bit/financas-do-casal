@@ -181,3 +181,22 @@ assert.strictEqual(q('presente sem valor')[0].erro, 'Não achei o valor');
   assert.strictEqual(r.length, 2); assert.strictEqual(r[0].valor, 5000); assert.ok(r[1].erro);
 }
 console.log('OK — testes da entrega 3');
+{
+  const cats = [{ id: 'moradia', nome: 'Aluguel / financiamento', grupo: 'moradia' }, { id: 'agua', nome: 'Água', grupo: 'moradia' }, { id: 'cartao', nome: 'Fatura de cartão (total)', grupo: 'outros' }, { id: 'esportes', nome: 'Esportes / lutas', grupo: 'saude' }, { id: 'outros', nome: 'Outros', grupo: 'outros' }, { id: 'salario', nome: 'Salário', grupo: 'receitas' }];
+  const grade = [{ sheet: 'Controle 2026', data: [['CONTROLE 2026'], ['CATEGORIA', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez', 'TOTAL'], ['MORADIA'], ['Aluguel (Caixa)', null, null, null, null, null, null, null, 974.39, 974.39], ['Água', null, null, null, null, null, null, null, 70, '106,31'], ['Subtotal Moradia', 0, 0, 0, 0, 0, 0, 0, 1044.39, 1080.7], ['CARTÕES'], ['Cartão 1 (BB)', null, null, null, null, null, null, null, null, 291.5], ['Muay thai', null, null, null, null, null, null, null, null, 150], ['TOTAL GERAL DO MÊS', 0, 0, 0, 0, 0, 0, 0, 1044.39, 1522.2]] },
+    { sheet: 'Resumo 2026', data: [['MÊS', 'RECEITA PREVISTA', 'DESPESAS'], ['Jul/26', null, 0], ['Ago/26', 4356.92, 1044.39], ['Set/26', 5000, 1522.2], ['TOTAL DO ANO', 9356.92]] }];
+  const r = F.lerPlanilha(grade, { hoje: '2026-11-16' });
+  assert.deepStrictEqual(r.abas.map((a) => a.formato), ['grade', 'resumo']);
+  assert.strictEqual(r.itens.length, 6);
+  assert.strictEqual(F.r2(r.itens.filter((i) => i.mes === '2026-09').reduce((s, i) => s + i.valor, 0)), 1522.2);
+  assert.deepStrictEqual(r.resumo.map((x) => x.mes + ':' + x.valor), ['2026-08:4356.92', '2026-09:5000']);
+  assert.deepStrictEqual(r.itens.map((i) => F.sugerirCat(i.nome, i.grupo, i.tipo, cats)), ['moradia', 'moradia', 'agua', 'agua', 'cartao', 'cartao']);
+  assert.strictEqual(F.sugerirCat('Muay thai', 'PESSOAL', 'despesa', cats), 'esportes');
+  assert.strictEqual(F.idImport(r.itens[0].chave), F.idImport(F.lerPlanilha(grade, {}).itens[0].chave));
+  const lista = [{ sheet: 'Extrato', data: [['Data', 'Descrição', 'Categoria', 'Valor', 'Situação'], ['05/11/2026', 'Mercado', 'Mercado', 'R$ 230,50', 'Pago'], ['20/11/2026', 'Conta de luz', 'Energia', 312.4, 'Pendente'], ['21/11/2026', 'Estorno', '', -10, '']] }];
+  const l = F.lerPlanilha(lista, { hoje: '2026-11-16' }).itens;
+  assert.deepStrictEqual(l.map((i) => [i.data, i.valor, i.tipo, i.status]), [['2026-11-05', 230.5, 'despesa', 'pago'], ['2026-11-20', 312.4, 'despesa', 'pendente'], ['2026-11-21', 10, 'receita', 'pendente']]);
+  assert.deepStrictEqual(F.lerCSV('Data;Descrição;Valor\r\n05/11/2026;"Mercado; feira";230,50\n'), [['Data', 'Descrição', 'Valor'], ['05/11/2026', 'Mercado; feira', '230,50']]);
+  assert.deepStrictEqual(F.lerCSV('a,b\n1,2.5'), [['a', 'b'], [1, 2.5]]);
+  console.log('OK — importar planilha');
+}
