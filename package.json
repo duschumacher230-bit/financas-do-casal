@@ -1,0 +1,15 @@
+{
+  "name": "financas-do-casal",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node src/logic.test.js"
+  },
+  "dependencies": {
+    "firebase": "13.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.24.2"
+  }
+}
