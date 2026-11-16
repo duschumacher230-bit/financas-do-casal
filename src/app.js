@@ -126,6 +126,8 @@ import { DB, Conta } from './firebase-shim.js';
     meus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>',
     casal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3.2"/><circle cx="16.5" cy="9" r="2.8"/><path d="M2.5 20c1-3.5 3-5 5.5-5s4.5 1.5 5.5 5M13 15.6c1-.4 2-.6 3.5-.6 2.4 0 4.2 1.4 5 5"/></svg>',
     evolucao: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7"/><path d="M3 20h18"/></svg>',
+    metas: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 10c0-3.3-3.1-6-7-6S5 6.7 5 10c0 1.9 1 3.6 2.6 4.7L7 19h3l.5-2h3l.5 2h3l-.6-4.3c1-.7 1.8-1.6 2.2-2.7H21v-3h-2.2c.1.3.2.6.2 1z"/><circle cx="15" cy="9.5" r=".6" fill="currentColor"/></svg>',
+    busca: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
     viagem: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>',
   };
 
@@ -133,14 +135,16 @@ import { DB, Conta } from './firebase-shim.js';
     db: null, user: null, uid: null, email: '', authPronto: false, canWrite: true, fatal: null, timeout: false, err: null,
     mes: mesHoje(), aba: 'painel', filtro: 'tudo',
     meus: [], conj: [], cofre: [], membros: {}, resumos: {}, cfgCasal: {}, viagem: null, acertos: {},
-    fixas: [], fixasCasal: [], limites: {}, limitesCasal: {}, cartoes: [], catalogo: null,
+    fixas: [], fixasCasal: [], limites: {}, limitesCasal: {}, cartoes: [], catalogo: null, metas: [], metasPess: [], movPess: [],
+    busca: { q: '', onde: 'tudo', periodo: '12', status: 'todas', tipo: 'todos', cat: '', pag: '' },
     evoQuem: 'casal', evoN: 6, evoSel: null, evoModo: 'hist', evoAno: null, prevVar: true, rendaPrev: {},
     got: {}, firm: {},
   };
   const meusCol = () => S.db.collection('usuarios/' + S.uid + '/lancamentos');
   const fixasCol = () => S.db.collection('usuarios/' + S.uid + '/fixas');
-  const ABAS = ['painel', 'meus', 'casal', 'viagem', 'evolucao'];
-  const lerHash = () => { const h = (location.hash || '').slice(1); return ABAS.includes(h) ? h : 'painel'; };
+  const TABS_NAV = ['painel', 'meus', 'casal', 'metas', 'evolucao'];
+  const ABAS = TABS_NAV.concat(['busca']);
+  const lerHash = () => { let h = (location.hash || '').slice(1); if (h === 'viagem') h = 'metas'; return ABAS.includes(h) ? h : 'painel'; };
   S.aba = lerHash();
   reindexarCats();
 
@@ -161,14 +165,14 @@ import { DB, Conta } from './firebase-shim.js';
     const mes = mesParam || S.mes;
     const I = ids();
     const resumos = Object.assign({}, S.resumos);
-    if (S.uid) resumos[S.uid] = { meses: FL.resumoPessoal(S.meus) };
+    if (S.uid) resumos[S.uid] = { meses: meuResumo() };
     const div = FL.divisao(mes, I, resumos, S.cfgCasal);
     const divHoje = FL.divisao(mesHoje(), I, resumos, S.cfgCasal);
     const conj = FL.conjuntoMes(S.conj, mes, I, div.pct);
     const cof = FL.cofrinho(S.cofre, S.viagem, mesHoje(), I, divHoje.pct);
     const guardMes = cof.noMes[mes] || {};
     const cartoes = {};
-    I.forEach((id) => { cartoes[id] = FL.cartaoPessoa(resumos[id] && resumos[id].meses && resumos[id].meses[mes], conj.parte[id], guardMes[id]); });
+    I.forEach((id) => { const rm = resumos[id] && resumos[id].meses && resumos[id].meses[mes]; cartoes[id] = FL.cartaoPessoa(rm, conj.parte[id], (guardMes[id] || 0) + ((rm && rm.metas) || 0)); });
     const soma = (f) => FL.r2(I.reduce((s, id) => s + (cartoes[id][f] || 0), 0));
     const renda = soma('renda');
     const gastosPess = soma('gastos');
@@ -229,8 +233,9 @@ import { DB, Conta } from './firebase-shim.js';
       tabs.hidden = true; fab.hidden = true; montarBoasVindas(); return;
     }
     main.dataset.bv = '';
-    const m = modelo();
     top.innerHTML = cabecalho();
+    if (S.aba === 'busca' && $('#f-busca')) { $('#busca-res').innerHTML = resultadosBusca(); tabs.hidden = false; return; }
+    const m = modelo();
     let html = '';
     if (S.canWrite === false) html += '<div class="banner">Seu acesso a este app é só de leitura. Para lançar, peça para ser convidado(a) por e-mail com acesso de Editor.</div>';
     if (S.timeout && !S.firm.membros) html += '<div class="banner">Sem conexão com o banco de dados no momento — os números podem estar desatualizados.</div>';
@@ -238,12 +243,14 @@ import { DB, Conta } from './firebase-shim.js';
     else if (S.aba === 'meus') html += viewMeus(m);
     else if (S.aba === 'casal') html += viewCasal(m);
     else if (S.aba === 'evolucao') html += viewEvolucao(m);
-    else html += viewViagem(m);
+    else if (S.aba === 'busca') html += viewBusca();
+    else html += viewMetas();
     main.innerHTML = html;
+    if (S.aba === 'busca') montarBusca();
     tabs.hidden = false;
-    tabs.innerHTML = '<div class="in">' + ABAS.map((a) => '<a href="#' + a + '"' + (S.aba === a ? ' aria-current="page"' : '') + '>' + ICON[a] + '<span>' + ({ painel: 'Painel', meus: 'Meus', casal: 'Casal', viagem: 'Viagem', evolucao: 'Evolução' })[a] + '</span></a>').join('') + '</div>';
+    tabs.innerHTML = '<div class="in">' + TABS_NAV.map((a) => '<a href="#' + a + '"' + (S.aba === a ? ' aria-current="page"' : '') + '>' + ICON[a] + '<span>' + ({ painel: 'Painel', meus: 'Meus', casal: 'Casal', metas: 'Metas', evolucao: 'Evolução' })[a] + '</span></a>').join('') + '</div>';
     fab.hidden = S.canWrite === false;
-    fab.setAttribute('aria-label', S.aba === 'viagem' ? 'Guardar dinheiro no cofrinho' : 'Novo lançamento');
+    fab.setAttribute('aria-label', S.aba === 'metas' ? 'Guardar dinheiro numa meta' : 'Novo lançamento');
   }
 
   function cabecalhoSimples() {
@@ -253,9 +260,9 @@ import { DB, Conta } from './firebase-shim.js';
     const ms = casal().map((x) => pessoa(x.id));
     const pair = '<span class="pair">' + ms.map((p) => '<span style="background:' + esc(p.cor) + '">' + inicial(p.nome) + '</span>').join('') + '</span>';
     const hoje = S.mes !== mesHoje() ? '<button class="hoje" data-act="mes-hoje" type="button">Hoje</button>' : '';
-    const mostraMes = S.aba !== 'viagem';
+    const mostraMes = S.aba !== 'metas';
     return '<div class="top-row"><div class="brand">' + pair + '<h1>Finanças do Casal</h1></div>' +
-      '<button class="icon-btn" type="button" data-act="config" aria-label="Configurações">' + ICON.gear + '</button></div>' +
+      '<div class="top-acts"><button class="icon-btn" type="button" data-act="ir" data-tab="busca" aria-label="Buscar lançamentos">' + ICON.busca + '</button><button class="icon-btn" type="button" data-act="config" aria-label="Configurações">' + ICON.gear + '</button></div></div>' +
       (mostraMes ? '<div class="month"><button type="button" data-act="mes-prev" aria-label="Mês anterior">' + ICON.left + '</button><div class="label">' + nomeMes(S.mes) + '</div>' + hoje + '<button type="button" data-act="mes-next" aria-label="Próximo mês">' + ICON.right + '</button></div>' : '');
   }
 
@@ -268,6 +275,7 @@ import { DB, Conta } from './firebase-shim.js';
     const ps = m.I.map(pessoa);
     let h = '';
     if (m.I.length < 2) h += cardConvite();
+    h += botaoRapido();
     h += cardFechamento();
 
     // Casal
@@ -281,7 +289,7 @@ import { DB, Conta } from './firebase-shim.js';
       '<div><div class="sub">Sobra do casal no mês</div><div class="money-big ' + valorCls(t.saldo) + '">' + fmt(t.saldo) + '</div></div>' +
       '<div class="stats"><div class="stat"><span class="k">Renda total</span><span class="v pos">' + fmt(t.renda) + '</span></div>' +
       '<div class="stat"><span class="k">Despesas totais</span><span class="v neg">' + fmt(t.despesas) + '</span></div>' +
-      '<div class="stat"><span class="k">Guardado p/ viagem</span><span class="v">' + fmt(t.guardado) + '</span></div></div>' +
+      '<div class="stat"><span class="k">Guardado em metas</span><span class="v">' + fmt(t.guardado) + '</span></div></div>' +
       (segs.length ? '<div class="stack" role="img" aria-label="Para onde foi a renda do casal">' + segs.map((s) => '<i style="width:' + (s.v / base * 100).toFixed(2) + '%;background:' + s.cor + '"></i>').join('') + '</div>' +
         '<div class="legend">' + segs.map((s) => '<span><b style="background:' + s.cor + '"></b>' + esc(s.nome) + ' ' + fmt(s.v) + '</span>').join('') + '</div>' : '') +
       (t.aPagar > 0 ? '<div class="note warn">Ainda a pagar neste mês: <strong>' + fmt(t.aPagar) + '</strong></div>' : '') +
@@ -297,7 +305,7 @@ import { DB, Conta } from './firebase-shim.js';
     if (m.I.length === 2 && m.conj.total > 0) h += cardAcerto(m, true);
 
     // Viagem
-    h += cardViagemMini(m);
+    h += cardMetasMini();
     return h;
   }
 
@@ -313,7 +321,7 @@ import { DB, Conta } from './firebase-shim.js';
         '<div class="rowkv"><span class="k">Renda</span><span class="v pos">' + fmt(c.renda) + '</span></div>' +
         '<div class="rowkv"><span class="k">Gastos pessoais</span><span class="v">' + fmt(c.gastos) + '</span></div>' +
         (m.I.length === 2 ? '<div class="rowkv"><span class="k">Parte no casal (' + pct(m.div.pct[p.id]) + ')</span><span class="v">' + fmt(c.parte) + '</span></div>' : '') +
-        '<div class="rowkv"><span class="k">Guardado p/ viagem</span><span class="v">' + fmt(c.guardado) + '</span></div>' +
+        '<div class="rowkv"><span class="k">Guardado em metas</span><span class="v">' + fmt(c.guardado) + '</span></div>' +
         '<div class="rowkv total"><span class="k">Sobra livre</span><span class="v ' + valorCls(c.saldo) + '">' + fmt(c.saldo) + '</span></div></div>' +
         (c.pctComprometido != null ? '<div><div class="rowkv" style="font-size:12px"><span class="k">Renda comprometida</span><span class="v">' + pct(c.pctComprometido) + '</span></div><div class="meter ' + meterCls(c.pctComprometido) + '"><i style="width:' + Math.min(100, c.pctComprometido * 100).toFixed(1) + '%;background:' + (c.pctComprometido > 0.8 ? '' : esc(p.cor)) + '"></i></div></div>' : '') +
         (c.aPagar > 0 ? '<div class="rowkv" style="font-size:13px"><span class="k">A pagar (pessoal)</span><span class="v warn">' + fmt(c.aPagar) + '</span></div>' : '');
@@ -360,15 +368,6 @@ import { DB, Conta } from './firebase-shim.js';
       }
     }
     return h + '</section>';
-  }
-
-  function cardViagemMini(m) {
-    const c = m.cof;
-    if (!S.viagem) return '<section class="card"><h2>Cofrinho da viagem</h2><p class="sub" style="margin:0">Defina o destino e a meta para acompanhar quanto falta.</p><button class="btn ghost" type="button" data-act="editar-viagem">Definir meta</button></section>';
-    return '<section class="card"><div class="card-head"><div><div class="eyebrow">Cofrinho da viagem</div><h2>' + esc(S.viagem.destino || 'Viagem') + '</h2></div><span class="badge">' + pct(c.progresso) + '</span></div>' +
-      '<div class="meter pos"><i style="width:' + (c.progresso * 100).toFixed(1) + '%"></i></div>' +
-      '<div class="rowkv"><span class="k">' + fmt(c.guardado) + ' de ' + fmt(c.meta) + '</span><span class="v">' + (c.mesesRestantes > 0 ? fmt(c.porMes) + '/mês até ' + esc(mesCurto(c.mesAlvo)) : 'Prazo chegou') + '</span></div>' +
-      '<button class="link" type="button" data-act="ir" data-tab="viagem">Abrir cofrinho</button></section>';
   }
 
   /* ---------- itens ---------- */
@@ -683,43 +682,6 @@ import { DB, Conta } from './firebase-shim.js';
       '<circle cx="60" cy="60" r="' + r + '" fill="none" stroke="var(--pos)" stroke-width="12" stroke-linecap="round" stroke-dasharray="' + (c * p).toFixed(1) + ' ' + c.toFixed(1) + '" transform="rotate(-90 60 60)"/>' +
       '<text x="60" y="66" text-anchor="middle" font-size="22">' + pct(p) + '</text></svg>';
   }
-  function viewViagem(m) {
-    const v = S.viagem;
-    const c = m.cof;
-    const ps = m.I.map(pessoa);
-    if (!v) {
-      return '<section class="card trip-hero"><div class="eyebrow">Cofrinho da viagem</div><h2>Defina o destino e a meta</h2><p class="sub" style="margin:0">Com a meta e o mês da viagem, o app calcula quanto guardar por mês e a parte de cada um.</p><button class="btn" type="button" data-act="editar-viagem">Definir meta</button></section>';
-    }
-    let h = '<section class="card trip-hero"><div class="card-head"><div><div class="eyebrow">Cofrinho da viagem</div><div class="trip-dest">' + esc(v.destino || 'Viagem') + '</div><div class="sub">' + (c.mesAlvo ? esc(nomeMes(c.mesAlvo)) : '') + '</div></div>' +
-      (S.canWrite !== false ? '<button class="link" type="button" data-act="editar-viagem">Editar meta</button>' : '') + '</div>' +
-      '<div class="ring-wrap">' + anel(c.progresso) + '<div class="rows">' +
-      '<div><div class="sub">Guardado</div><div class="money-big pos">' + fmt(c.guardado) + '</div><div class="sub">de ' + fmt(c.meta) + '</div></div>' +
-      '<div class="rowkv"><span class="k">Falta</span><span class="v">' + fmt(c.falta) + '</span></div></div></div>';
-    if (c.mesesRestantes != null) {
-      if (c.falta <= 0) h += '<div class="note pos"><strong>Meta batida!</strong></div>';
-      else if (c.mesesRestantes > 0) {
-        h += '<div class="settle" style="grid-template-columns:1fr"><div><div class="sub">Para chegar em ' + esc(mesLongo(c.mesAlvo)) + ' (' + c.mesesRestantes + ' ' + (c.mesesRestantes === 1 ? 'mês' : 'meses') + ')</div><div class="amt">' + fmt(c.porMes) + ' por mês</div></div></div>';
-        if (ps.length === 2) h += '<div class="rows">' + ps.map((p) => '<div class="rowkv"><span class="k">' + esc(p.nome) + ' (' + pct(m.divHoje.pct[p.id]) + ')</span><span class="v">' + fmt(c.sugestao[p.id]) + '/mês</span></div>').join('') + '<div class="hint">Sugestão pela mesma divisão das despesas do casal (' + esc(textoBase(m.divHoje)) + ').</div></div>';
-      } else h += '<div class="note warn">O mês da viagem chegou. Faltaram ' + fmt(c.falta) + '.</div>';
-    }
-    if (S.canWrite !== false) h += '<div class="btn-row"><button class="btn" type="button" data-act="cofre-novo" data-tipo="deposito">Guardar</button><button class="btn ghost" type="button" data-act="cofre-novo" data-tipo="retirada">Retirar</button></div>';
-    h += '</section>';
-
-    if (ps.length) {
-      const max = Math.max(1, ...ps.map((p) => Math.abs(c.porPessoa[p.id] || 0)));
-      h += '<section class="card"><h2>Quanto cada um guardou</h2><div class="rows">' + ps.map((p) => '<div style="display:grid;gap:4px"><div class="rowkv"><span class="k" style="display:flex;align-items:center;gap:8px">' + avatar(p, 22) + esc(p.nome) + '</span><span class="v">' + fmt(c.porPessoa[p.id]) + '</span></div><div class="meter"><i style="width:' + (Math.max(0, c.porPessoa[p.id]) / max * 100).toFixed(1) + '%;background:' + esc(p.cor) + '"></i></div></div>').join('') + '</div></section>';
-    }
-    const movs = S.cofre.slice().sort((a, b) => b.data.localeCompare(a.data) || (b.criadoEm || 0) - (a.criadoEm || 0));
-    h += '<section class="card"><h2>Movimentações</h2>' + (movs.length ? '<div class="list">' + movs.map((x) => {
-      const p = pessoa(x.autor);
-      const ret = x.tipo === 'retirada';
-      return '<div class="item" role="button" tabindex="0" data-act="abrir-mov" data-id="' + esc(x.id) + '"><span class="ico">' + (ret ? '↩️' : '🐷') + '<span class="dot" style="background:' + esc(p.cor) + '"></span></span>' +
-        '<div style="min-width:0"><div class="t">' + (ret ? 'Retirada' : 'Guardou') + ' · ' + esc(p.nome) + '</div><div class="s">' + esc(dataCurta(x.data) + (x.obs ? ' · ' + x.obs : '')) + '</div></div>' +
-        '<span class="r"><span class="val ' + (ret ? 'neg' : 'pos') + '">' + (ret ? '−' : '+') + ' ' + fmt(x.valor) + '</span></span></div>';
-    }).join('') + '</div>' : '<div class="empty">Nenhum valor guardado ainda. Toque em “Guardar” para começar o cofrinho.</div>') + '</section>';
-    return h;
-  }
-
   /* ---------- boas-vindas ---------- */
   let bvCor = null;
   function telaBoasVindas() {
@@ -732,7 +694,7 @@ import { DB, Conta } from './firebase-shim.js';
     const outro = ms[0] ? pessoa(ms[0].id) : null;
     return '<div class="center-screen"><form class="card welcome" id="f-bv">' +
       '<div class="eyebrow">Bem-vindo(a)</div><h2>' + (outro ? esc(outro.nome) + ' convidou você para as finanças do casal' : 'Vamos montar as finanças do casal') + '</h2>' +
-      '<p class="sub" style="margin:0">Seus lançamentos pessoais ficam privados: ' + (outro ? esc(outro.nome) : 'a outra pessoa') + ' vê só os seus totais do mês. As despesas do casal e o cofrinho da viagem os dois veem.</p>' +
+      '<p class="sub" style="margin:0">Seus lançamentos pessoais ficam privados: ' + (outro ? esc(outro.nome) : 'a outra pessoa') + ' vê só os seus totais do mês. As despesas e as metas do casal os dois veem.</p>' +
       '<div class="field"><label for="bv-nome">Como você quer aparecer?</label><input class="input" id="bv-nome" maxlength="24" autocomplete="given-name" placeholder="Seu nome" required></div>' +
       '<div class="field"><span>Sua cor</span><div class="colors" id="bv-cores">' + CORES.map((c) => '<button type="button" data-cor="' + c + '" aria-label="Cor ' + c + '" aria-pressed="' + (c === bvCor) + '" style="background:' + c + '"' + (usadas.includes(c) ? ' disabled' : '') + '></button>').join('') + '</div></div>' +
       '<div class="err" id="bv-err" hidden></div>' +
@@ -780,11 +742,11 @@ import { DB, Conta } from './firebase-shim.js';
   let syncT = 0, syncando = false, syncDeNovo = false;
   function agendarSync() { clearTimeout(syncT); syncT = setTimeout(syncResumo, 700); }
   async function syncResumo() {
-    if (!S.firm.meus || !S.got.resumos || !S.firm.fixas || !S.firm.cartoes || !S.firm.limites || !souMembro() || S.canWrite === false) return;
+    if (!S.firm.meus || !S.got.resumos || !S.firm.fixas || !S.firm.cartoes || !S.firm.limites || !S.firm.metasPess || !S.firm.movPess || !souMembro() || S.canWrite === false) return;
     if (syncando) { syncDeNovo = true; return; }
-    const meses = FL.resumoPessoal(S.meus);
+    const meses = meuResumo();
     const prev = {};
-    minhaProjecao(proximosMeses(12)).forEach((p) => { prev[p.mes] = { renda: p.renda, despesas: p.despesas }; });
+    minhaProjecao(proximosMeses(12)).forEach((p) => { prev[p.mes] = { renda: p.renda, despesas: p.despesas, metas: p.metas }; });
     const novo = { meses, prev, varMedia: FL.mediaVariavel(S.meus, mesHoje()), varAtual: FL.gastoVariavel(S.meus, mesHoje()) };
     const atual = S.resumos[S.uid];
     if (atual && FL.stable({ meses: atual.meses || {}, prev: atual.prev || {}, varMedia: atual.varMedia || 0, varAtual: atual.varAtual || 0 }) === FL.stable(novo)) return;
@@ -837,6 +799,7 @@ import { DB, Conta } from './firebase-shim.js';
     const dataIni = editar ? (item.dataCompra || item.data) : (base.data || dataPadrao());
     const travaData = editar && item.pag === 'cartao' && item.parcela;
     const corpo = '<form id="f-lanc" class="field" style="gap:14px" novalidate>' +
+      (editar || rascunho ? '' : '<button class="quick sm" type="button" data-act="rapido"><span>⚡</span><span>Lançar por texto ou voz</span><span class="mic">🎙️</span></button>') +
       (editar ? '' : '<div class="field"><span>Para quem é</span>' + seg('dest', [['pessoal', 'Só meu (privado)'], ['casal', 'Do casal']], st.destino) + '</div>') +
       '<div class="field" id="w-tipo"' + (st.destino === 'casal' ? ' hidden' : '') + '><span>Tipo</span>' + seg('tipo', [['despesa', 'Despesa'], ['receita', 'Receita']], st.tipo) + '</div>' +
       '<div class="field"><label for="f-valor" id="l-valor">Valor</label><div class="money-in"><span>R$</span><input id="f-valor" inputmode="decimal" autocomplete="off" placeholder="0,00" value="' + (base.valor ? fmtInput(base.valor) : '') + '"></div></div>' +
@@ -969,7 +932,8 @@ import { DB, Conta } from './firebase-shim.js';
         if (ok) {
           fecharModal(); agendarSync();
           toast(avisoLimite(escopo, st.cat, mesPrimeiro, serie[0].valor, null, tipo) || (usaCartao ? 'Lançado na fatura de ' + mesCurto(mesPrimeiro) : serie.length > 1 ? serie.length + ' lançamentos criados' : (st.destino === 'casal' ? 'Lançado no casal' : 'Lançado')));
-          if (mesPrimeiro !== S.mes) S.mes = mesPrimeiro;
+          if (mesPrimeiro !== S.mes && !(rascunho && rascunho._rapido)) S.mes = mesPrimeiro;
+          if (rascunho && rascunho._rapido && rapidoDrafts.length) setTimeout(() => formRapido(true), 450);
           if (st.destino === 'casal' && S.aba === 'meus') location.hash = 'casal';
           else if (st.destino === 'pessoal' && S.aba === 'casal') location.hash = 'meus';
           render();
@@ -1009,71 +973,6 @@ import { DB, Conta } from './firebase-shim.js';
       '<div class="rowkv"><span class="k">Situação</span><span class="v">' + (l.status === 'pendente' ? 'A pagar' : 'Pago') + '</span></div>' +
       (l.parcela ? '<div class="rowkv"><span class="k">Parcela</span><span class="v">' + esc(l.parcela) + '</span></div>' : '') + '</div>' +
       '<div class="note">Só ' + esc(p.nome) + ' pode alterar ou excluir este lançamento.</div>');
-  }
-
-  /* ---------- cofrinho ---------- */
-  function formMov(tipo, item) {
-    const editar = !!item;
-    if (editar && item.autor !== S.uid) {
-      const p = pessoa(item.autor);
-      return abrirModal('Movimentação do cofrinho', '<div class="who">' + avatar(p) + '<div><div class="name">' + (item.tipo === 'retirada' ? 'Retirada' : 'Guardou') + ' ' + fmt(item.valor) + '</div><div class="sub">' + esc(p.nome) + ' · ' + esc(dataCurta(item.data)) + '</div></div></div>' + (item.obs ? '<p class="sub" style="margin:0">' + esc(item.obs) + '</p>' : '') + '<div class="note">Só ' + esc(p.nome) + ' pode alterar esta movimentação.</div>');
-    }
-    tipo = (item && item.tipo) || tipo || 'deposito';
-    const corpo = '<form id="f-mov" class="field" style="gap:14px" novalidate>' +
-      '<div class="field"><span>Movimento</span>' + seg('mt', [['deposito', 'Guardar'], ['retirada', 'Retirar']], tipo) + '</div>' +
-      '<div class="field"><label for="m-valor">Valor</label><div class="money-in"><span>R$</span><input id="m-valor" inputmode="decimal" autocomplete="off" placeholder="0,00" value="' + (item ? fmtInput(item.valor) : '') + '"></div></div>' +
-      '<div class="two"><div class="field"><label for="m-data">Data</label><input class="input" type="date" id="m-data" value="' + esc(item ? item.data : hojeISO()) + '"></div>' +
-      '<div class="field"><label for="m-obs">Observação</label><input class="input" id="m-obs" maxlength="60" placeholder="Opcional" value="' + esc(item ? item.obs || '' : '') + '"></div></div>' +
-      '<div class="err" id="m-err" hidden></div><button class="btn block" type="submit">' + (editar ? 'Salvar' : 'Confirmar') + '</button>' +
-      (editar ? '<button class="btn danger" type="button" id="m-del">Excluir</button>' : '') + '</form>';
-    abrirModal(editar ? 'Editar movimentação' : 'Cofrinho da viagem', corpo, (el) => {
-      const f = $('#f-mov', el);
-      f.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const valor = FL.parseValor($('#m-valor', el).value);
-        const data = $('#m-data', el).value;
-        const err = $('#m-err', el);
-        if (!(valor > 0)) { err.hidden = false; err.textContent = 'Informe um valor maior que zero.'; return; }
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) { err.hidden = false; err.textContent = 'Escolha a data.'; return; }
-        const doc = { tipo: radio(f, 'mt'), valor, data, mes: FL.mesDe(data), obs: $('#m-obs', el).value.trim(), autor: S.uid };
-        const btn = f.querySelector('button[type=submit]'); btn.disabled = true;
-        const ok = editar
-          ? await escrever(() => S.db.doc('cofrinho/' + item.id).update(doc), 'Movimentação atualizada')
-          : await escrever(() => S.db.collection('cofrinho').add(Object.assign(doc, { criadoEm: Date.now() })), doc.tipo === 'retirada' ? 'Retirada registrada' : 'Guardado no cofrinho');
-        if (ok) fecharModal(); else btn.disabled = false;
-      });
-      const d = $('#m-del', el);
-      if (d) d.addEventListener('click', async () => {
-        if (!d.dataset.armed) { d.dataset.armed = '1'; d.textContent = 'Toque de novo para excluir'; return; }
-        d.disabled = true;
-        if (await escrever(() => S.db.doc('cofrinho/' + item.id).delete(), 'Movimentação excluída')) fecharModal();
-      });
-    });
-  }
-
-  function formViagem() {
-    const v = S.viagem || {};
-    const hoje = mesHoje();
-    const alvo = v.mes || FL.addMeses(hoje, 6);
-    const [ay, am] = alvo.split('-').map(Number);
-    const anos = []; for (let y = +hoje.slice(0, 4); y <= +hoje.slice(0, 4) + 4; y++) anos.push(y);
-    const corpo = '<form id="f-viag" class="field" style="gap:14px" novalidate>' +
-      '<div class="field"><label for="v-dest">Destino</label><input class="input" id="v-dest" maxlength="40" value="' + esc(v.destino || '') + '" placeholder="Ex.: Santa Catarina"></div>' +
-      '<div class="field"><label for="v-meta">Meta do casal</label><div class="money-in"><span>R$</span><input id="v-meta" inputmode="decimal" value="' + (v.meta ? fmtInput(v.meta) : '') + '" placeholder="0,00"></div></div>' +
-      '<div class="two"><div class="field"><label for="v-mes">Mês da viagem</label><select class="input" id="v-mes">' + MESES.map((n, i) => '<option value="' + pad(i + 1) + '"' + (i + 1 === am ? ' selected' : '') + '>' + n + '</option>').join('') + '</select></div>' +
-      '<div class="field"><label for="v-ano">Ano</label><select class="input" id="v-ano">' + anos.map((y) => '<option' + (y === ay ? ' selected' : '') + '>' + y + '</option>').join('') + '</select></div></div>' +
-      '<div class="hint">O app calcula quanto guardar por mês até o mês da viagem.</div>' +
-      '<div class="err" id="v-err" hidden></div><button class="btn block" type="submit">Salvar meta</button></form>';
-    abrirModal('Meta da viagem', corpo, (el) => {
-      $('#f-viag', el).addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const meta = FL.parseValor($('#v-meta', el).value);
-        const err = $('#v-err', el);
-        if (!(meta > 0)) { err.hidden = false; err.textContent = 'Informe a meta em reais.'; return; }
-        const doc = { destino: $('#v-dest', el).value.trim() || 'Viagem', meta, mes: $('#v-ano', el).value + '-' + $('#v-mes', el).value, atualizadoEm: Date.now(), por: S.uid };
-        if (await escrever(() => S.db.doc('config/viagem').set(doc), 'Meta salva')) fecharModal();
-      });
-    });
   }
 
   /* ---------- configurações ---------- */
@@ -1492,7 +1391,7 @@ import { DB, Conta } from './firebase-shim.js';
       '<div class="readout"><div class="rd-mes">' + esc(nomeMes(d.mes)) + '</div><div class="rd-grid">' +
       '<div><span class="k"><b style="background:var(--s-renda)"></b>Renda</span><span class="v">' + fmt(d.renda) + '</span></div>' +
       '<div><span class="k"><b style="background:var(--s-gastos)"></b>Gastos</span><span class="v">' + fmt(d.gastos) + '</span></div>' +
-      '<div><span class="k">Guardado viagem</span><span class="v">' + fmt(d.guardado) + '</span></div>' +
+      '<div><span class="k">Guardado</span><span class="v">' + fmt(d.guardado) + '</span></div>' +
       '<div><span class="k"><b class="lk" style="background:var(--s-sobra)"></b>Sobra</span><span class="v ' + valorCls(d.sobra) + '">' + fmt(d.sobra) + '</span></div></div>' +
       '<div class="hint">Toque em um mês do gráfico para ver os valores.</div>' + (quem !== (par && par.id) && (d.renda || d.gastos) ? '<button class="link" type="button" data-act="fechamento" data-mes="' + d.mes + '">Relatório de fechamento de ' + esc(mesCurto(d.mes)) + '</button>' : '') + '</div></section>';
     h += '<section class="card"><div class="stats">' +
@@ -1503,20 +1402,20 @@ import { DB, Conta } from './firebase-shim.js';
     const nf = (v) => NUM.format(v || 0);
     h += '<section class="card"><div class="card-head"><h2>Mês a mês</h2><span class="sub">valores em R$</span></div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mês</th><th>Renda</th><th>Gastos</th><th>Guardado</th><th>Sobra</th></tr></thead><tbody>' +
       serie.slice().reverse().map((x) => '<tr><td>' + esc(mesCurto(x.mes)) + '</td><td class="v">' + nf(x.renda) + '</td><td class="v">' + nf(x.gastos) + '</td><td class="v">' + nf(x.guardado) + '</td><td class="v ' + valorCls(x.sobra) + '">' + nf(x.sobra) + '</td></tr>').join('') +
-      '</tbody></table></div><div class="hint">Gastos incluem a parte de cada um nas despesas do casal. Sobra = renda − gastos − guardado para a viagem.</div></section>';
+      '</tbody></table></div><div class="hint">Gastos incluem a parte de cada um nas despesas do casal. Sobra = renda − gastos − guardado nas metas.</div></section>';
     return h;
   }
 
   /* ---------- previsão ---------- */
   function mapaCartoes() { const o = {}; S.cartoes.forEach((c) => { o[c.id] = { fechamento: c.fechamento, vencimento: c.vencimento }; }); return o; }
   function proximosMeses(n, ini) { const b = ini || mesHoje(); return Array.from({ length: n }, (_, i) => FL.addMeses(b, i)); }
-  function minhaProjecao(meses) { return FL.projecao(S.meus, S.fixas, meses, mesHoje(), mapaCartoes(), S.rendaPrev); }
-  function metasPorMes(meses) {
-    const o = {};
-    const c = FL.cofrinho(S.cofre, S.viagem, mesHoje(), [], {});
-    if (S.viagem && c.mesAlvo && c.porMes > 0) meses.forEach((x) => { if (x >= mesHoje() && x < c.mesAlvo) o[x] = c.porMes; });
-    return o;
+  function minhaProjecao(meses) {
+    const res = FL.projecao(S.meus, S.fixas, meses, mesHoje(), mapaCartoes(), S.rendaPrev);
+    const rm = reservaMetas(metasMinhas(), meses);
+    res.forEach((p) => { p.metas = rm[p.mes] || 0; });
+    return res;
   }
+  function metasPorMes(meses) { return reservaMetas(metasCasal(), meses); }
   function seletorEvo(quem, opcoes) {
     return '<div class="chips" role="group" aria-label="De quem">' + opcoes.map(([v, n]) => '<button class="chip" type="button" data-act="evo-quem" data-v="' + esc(v) + '" aria-pressed="' + (quem === v) + '">' + esc(n) + '</button>').join('') + '</div>';
   }
@@ -1561,7 +1460,7 @@ import { DB, Conta } from './firebase-shim.js';
     const nf = (v) => NUM.format(v || 0);
     h += '<section class="card"><div class="card-head"><h2>Mês a mês</h2><span class="sub">valores em R$</span></div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mês</th><th>Renda</th><th>Saídas</th><th>Metas</th><th>Sobra</th></tr></thead><tbody>' +
       serie.map((x, i) => '<tr data-act="evo-sel" data-i="' + i + '" class="' + (i === sel ? 'sel' : '') + '"><td>' + esc(mesCurto(x.mes)) + '</td><td class="v">' + nf(x.renda) + '</td><td class="v">' + nf(x.compromissos + x.variaveis) + '</td><td class="v">' + nf(x.metas) + '</td><td class="v ' + valorCls(x.sobra) + '">' + nf(x.sobra) + '</td></tr>').join('') +
-      '</tbody></table></div><div class="hint">A previsão soma contas fixas (inclusive as que ainda vão ser lançadas), parcelas e faturas de cartão' + (S.prevVar ? ', mais a média dos gastos do dia a dia dos últimos 3 meses' : '') + '. A renda vem das receitas fixas e do que você ajustar. Metas = quanto guardar por mês para chegar à meta da viagem.</div></section>';
+      '</tbody></table></div><div class="hint">A previsão soma contas fixas (inclusive as que ainda vão ser lançadas), parcelas e faturas de cartão' + (S.prevVar ? ', mais a média dos gastos do dia a dia dos últimos 3 meses' : '') + '. A renda vem das receitas fixas e do que você ajustar. Metas = quanto guardar por mês para chegar às metas no prazo.</div></section>';
     return h;
   }
 
@@ -1719,6 +1618,347 @@ import { DB, Conta } from './firebase-shim.js';
     abrirModal('Fechamento de ' + mesLongo(mes), h);
   }
 
+  /* ---------- metas (vários cofrinhos) ---------- */
+  function metasCasal() {
+    const l = [];
+    if (S.viagem) l.push({ id: 'viagem', nome: S.viagem.destino || 'Viagem', meta: S.viagem.meta, mes: S.viagem.mes, ico: '✈️', escopo: 'casal' });
+    S.metas.filter((x) => x.ativa !== false).forEach((x) => l.push(Object.assign({ ico: '🎯' }, x, { escopo: 'casal' })));
+    return l;
+  }
+  const metasMinhas = () => S.metasPess.filter((x) => x.ativa !== false).map((x) => Object.assign({ ico: '🎯' }, x, { escopo: 'meu' }));
+  const todasMetas = () => metasCasal().concat(metasMinhas());
+  function movsDe(meta) {
+    return meta.escopo === 'casal' ? S.cofre.filter((x) => (x.metaId || 'viagem') === meta.id) : S.movPess.filter((x) => x.metaId === meta.id);
+  }
+  function calcMeta(meta) {
+    const I = ids();
+    if (meta.escopo === 'casal') {
+      const res = Object.assign({}, S.resumos); res[S.uid] = { meses: meuResumo() };
+      return FL.cofrinho(movsDe(meta), meta, mesHoje(), I, FL.divisao(mesHoje(), I, res, S.cfgCasal).pct);
+    }
+    return FL.cofrinho(movsDe(meta), meta, mesHoje(), [S.uid], { [S.uid]: 1 });
+  }
+  function meuResumo() {
+    const r = FL.resumoPessoal(S.meus);
+    for (const x of S.movPess) {
+      if (!x.mes || !(x.valor > 0)) continue;
+      const v = (x.tipo === 'retirada' ? -1 : 1) * x.valor;
+      r[x.mes] = r[x.mes] || { renda: 0, despesas: 0, aPagar: 0, aReceber: 0 };
+      r[x.mes].metas = FL.r2((r[x.mes].metas || 0) + v);
+    }
+    return r;
+  }
+  function reservaMetas(lista, meses) {
+    const o = {};
+    lista.forEach((mt) => {
+      const c = calcMeta(mt);
+      if (!c.mesAlvo || !(c.porMes > 0)) return;
+      meses.forEach((x) => { if (x >= mesHoje() && x < c.mesAlvo) o[x] = FL.r2((o[x] || 0) + c.porMes); });
+    });
+    return o;
+  }
+
+  function cardMeta(mt) {
+    const c = calcMeta(mt);
+    const ps = mt.escopo === 'casal' ? ids().map(pessoa) : [];
+    const divHoje = ps.length === 2 ? FL.divisao(mesHoje(), ids(), Object.assign({}, S.resumos, { [S.uid]: { meses: meuResumo() } }), S.cfgCasal) : null;
+    const nMov = movsDe(mt).length;
+    let h = '<section class="card meta-card"><div class="card-head"><div class="who"><span class="meta-ico">' + esc(mt.ico) + '</span><div><div class="name">' + esc(mt.nome) + '</div><div class="sub">' + (c.mesAlvo ? 'até ' + esc(mesLongo(c.mesAlvo)) : 'sem prazo') + (mt.escopo === 'meu' ? ' · só você vê' : '') + '</div></div></div>' +
+      (S.canWrite !== false ? '<button class="link" type="button" data-act="meta-editar" data-id="' + esc(mt.id) + '" data-esc="' + mt.escopo + '">Editar</button>' : '') + '</div>' +
+      '<div class="ring-wrap">' + anel(c.progresso) + '<div class="rows"><div><div class="sub">Guardado</div><div class="money-big pos">' + fmt(c.guardado) + '</div><div class="sub">de ' + fmt(c.meta) + '</div></div>' +
+      '<div class="rowkv"><span class="k">Falta</span><span class="v">' + fmt(c.falta) + '</span></div></div></div>';
+    if (c.mesesRestantes != null) {
+      if (c.falta <= 0) h += '<div class="note pos"><span>✓ <strong>Meta batida!</strong></span></div>';
+      else if (c.mesesRestantes > 0) {
+        h += '<div class="settle" style="grid-template-columns:1fr"><div><div class="sub">Para chegar em ' + esc(mesLongo(c.mesAlvo)) + ' (' + c.mesesRestantes + ' ' + (c.mesesRestantes === 1 ? 'mês' : 'meses') + ')</div><div class="amt">' + fmt(c.porMes) + ' por mês</div></div></div>';
+        if (ps.length === 2) h += '<div class="rows">' + ps.map((p) => '<div class="rowkv"><span class="k">' + esc(p.nome) + ' (' + pct(divHoje.pct[p.id]) + ')</span><span class="v">' + fmt(c.sugestao[p.id]) + '/mês</span></div>').join('') + '</div>';
+      } else h += '<div class="note warn"><span>O prazo chegou. Faltaram ' + fmt(c.falta) + '.</span></div>';
+    }
+    if (ps.length === 2) {
+      const max = Math.max(1, ...ps.map((p) => Math.abs(c.porPessoa[p.id] || 0)));
+      h += '<div class="rows">' + ps.map((p) => '<div style="display:grid;gap:4px"><div class="rowkv"><span class="k" style="display:flex;align-items:center;gap:8px">' + avatar(p, 20) + esc(p.nome) + ' guardou</span><span class="v">' + fmt(c.porPessoa[p.id]) + '</span></div><div class="meter"><i style="width:' + (Math.max(0, c.porPessoa[p.id]) / max * 100).toFixed(1) + '%;background:' + esc(p.cor) + '"></i></div></div>').join('') + '</div>';
+    }
+    if (S.canWrite !== false) h += '<div class="btn-row"><button class="btn" type="button" data-act="mov-novo" data-tipo="deposito" data-id="' + esc(mt.id) + '" data-esc="' + mt.escopo + '">Guardar</button><button class="btn ghost" type="button" data-act="mov-novo" data-tipo="retirada" data-id="' + esc(mt.id) + '" data-esc="' + mt.escopo + '">Retirar</button></div>';
+    if (nMov) h += '<button class="link" type="button" data-act="movs-ver" data-id="' + esc(mt.id) + '" data-esc="' + mt.escopo + '">Ver movimentações (' + nMov + ')</button>';
+    return h + '</section>';
+  }
+
+  function viewMetas() {
+    const cas = metasCasal(), minhas = metasMinhas();
+    let h = '<div class="sec-head"><h2>Metas do casal</h2>' + (S.canWrite !== false ? '<button class="link" type="button" data-act="meta-nova" data-esc="casal">+ Nova meta</button>' : '') + '</div>';
+    h += cas.length ? cas.map(cardMeta).join('') : '<section class="card"><p class="sub" style="margin:0">Viagem, reserva de emergência, carro… Crie uma meta, defina o valor e o prazo, e o app calcula quanto cada um guarda por mês.</p><button class="btn" type="button" data-act="meta-nova" data-esc="casal">Criar meta do casal</button></section>';
+    h += '<div class="sec-head"><h2>Minhas metas</h2>' + (S.canWrite !== false ? '<button class="link" type="button" data-act="meta-nova" data-esc="meu">+ Nova meta</button>' : '') + '</div>';
+    h += minhas.length ? minhas.map(cardMeta).join('') : '<section class="card"><p class="sub" style="margin:0">Metas só suas, que a outra pessoa não vê em detalhe (ela vê só o total guardado no mês).</p></section>';
+    return h;
+  }
+
+  function cardMetasMini() {
+    const lista = todasMetas();
+    if (!lista.length) return '<section class="card"><h2>Metas</h2><p class="sub" style="margin:0">Crie metas como a viagem ou uma reserva e acompanhe quanto falta.</p><button class="btn ghost" type="button" data-act="ir" data-tab="metas">Criar meta</button></section>';
+    return '<section class="card"><div class="card-head"><h2>Metas</h2><button class="link" type="button" data-act="ir" data-tab="metas">Abrir</button></div><div class="rows">' +
+      lista.map((mt) => {
+        const c = calcMeta(mt);
+        return '<div class="meta-mini"><div class="rowkv"><span class="k">' + esc(mt.ico) + ' ' + esc(mt.nome) + (mt.escopo === 'meu' ? ' 🔒' : '') + '</span><span class="v">' + pct(c.progresso) + '</span></div>' +
+          '<div class="meter pos"><i style="width:' + (c.progresso * 100).toFixed(1) + '%"></i></div>' +
+          '<div class="sub" style="font-size:12px">' + fmt(c.guardado) + ' de ' + fmt(c.meta) + (c.mesesRestantes > 0 && c.falta > 0 ? ' · ' + fmt(c.porMes) + '/mês até ' + esc(mesCurto(c.mesAlvo)) : '') + '</div></div>';
+      }).join('') + '</div></section>';
+  }
+
+  function acharMeta(id, escopo) { return (escopo === 'casal' ? metasCasal() : metasMinhas()).find((x) => x.id === id) || null; }
+
+  function formMeta(escopo, mt) {
+    const editar = !!mt;
+    const st = { ico: (mt && mt.ico) || (escopo === 'casal' ? '🎯' : '🐷') };
+    const ICS = ['✈️', '🏖️', '🏠', '🚗', '🛟', '💍', '🎓', '👶', '🐷', '🎯', '💻', '📱', '🎁', '🏥', '🛋️', '🏍️'];
+    const corpo = '<form id="f-meta" class="field" style="gap:14px" novalidate>' +
+      '<div class="field"><label for="mt-nome">Nome</label><input class="input" id="mt-nome" maxlength="40" value="' + esc(mt ? mt.nome : '') + '" placeholder="Ex.: Reserva de emergência"></div>' +
+      '<div class="field"><span>Ícone</span><div class="icones" id="mt-icos">' + ICS.map((i) => '<button type="button" data-ico="' + i + '" aria-pressed="' + (i === st.ico) + '">' + i + '</button>').join('') + '</div></div>' +
+      '<div class="field"><label for="mt-valor">Valor da meta</label><div class="money-in"><span>R$</span><input id="mt-valor" inputmode="decimal" value="' + (mt && mt.meta ? fmtInput(mt.meta) : '') + '" placeholder="0,00"></div></div>' +
+      '<div class="field"><label for="mt-mes">Prazo</label>' + seletorMes('mt-mes', 'mt-ano', mt ? mt.mes : FL.addMeses(mesHoje(), 6), true, 6) + '<div class="hint">Com o prazo, o app calcula quanto guardar por mês' + (escopo === 'casal' ? ' e a parte de cada um (pela mesma divisão do casal)' : '') + '.</div></div>' +
+      '<div class="err" id="mt-err" hidden></div><button class="btn block" type="submit">' + (editar ? 'Salvar' : 'Criar meta') + '</button>' +
+      (editar && mt.id !== 'viagem' ? '<button class="btn danger" type="button" id="mt-del">Excluir meta</button>' : '') + '</form>';
+    abrirModal(editar ? 'Editar meta' : (escopo === 'casal' ? 'Nova meta do casal' : 'Nova meta pessoal'), corpo, (el) => {
+      $('#mt-icos', el).addEventListener('click', (e) => {
+        const b = e.target.closest('button[data-ico]'); if (!b) return;
+        st.ico = b.dataset.ico; $$('#mt-icos button', el).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      });
+      const ref = () => {
+        if (editar && mt.id === 'viagem') return S.db.doc('config/viagem');
+        const col = escopo === 'casal' ? S.db.collection('metas') : S.db.collection('usuarios/' + S.uid + '/metas');
+        return editar ? col.doc(mt.id) : col.doc();
+      };
+      $('#f-meta', el).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const err = $('#mt-err', el);
+        const nome = $('#mt-nome', el).value.trim();
+        const valor = FL.parseValor($('#mt-valor', el).value);
+        const mm = $('#mt-mes', el).value, aa = $('#mt-ano', el).value;
+        if (!nome) { err.hidden = false; err.textContent = 'Dê um nome à meta.'; return; }
+        if (!(valor > 0)) { err.hidden = false; err.textContent = 'Informe o valor da meta.'; return; }
+        if (!!mm !== !!aa) { err.hidden = false; err.textContent = 'Escolha mês e ano do prazo (ou deixe os dois em branco).'; return; }
+        const mes = mm && aa ? aa + '-' + mm : null;
+        const doc = editar && mt.id === 'viagem' ? { destino: nome, meta: valor, mes, atualizadoEm: Date.now(), por: S.uid } : { nome, ico: st.ico, meta: valor, mes, ativa: true, atualizadoEm: Date.now(), por: S.uid };
+        const r = ref();
+        const ok = await escrever(() => (editar && mt.id !== 'viagem' ? r.update(doc) : r.set(editar ? doc : Object.assign(doc, { criadoEm: Date.now() }))), editar ? 'Meta atualizada' : 'Meta criada');
+        if (ok) { fecharModal(); agendarSync(); if (!editar) location.hash = 'metas'; }
+      });
+      const d = $('#mt-del', el);
+      if (d) d.addEventListener('click', async () => {
+        if (!d.dataset.armed) { d.dataset.armed = '1'; d.textContent = 'Toque de novo: a meta some e as movimentações dela deixam de contar'; return; }
+        d.disabled = true;
+        if (await escrever(() => ref().delete(), 'Meta excluída')) { fecharModal(); agendarSync(); }
+      });
+    });
+  }
+
+  function verMovs(mt) {
+    const movs = movsDe(mt).slice().sort((a, b) => b.data.localeCompare(a.data) || (b.criadoEm || 0) - (a.criadoEm || 0));
+    abrirModal(mt.ico + ' ' + mt.nome, '<div class="list">' + movs.map((x) => {
+      const p = mt.escopo === 'casal' ? pessoa(x.autor) : pessoa(S.uid);
+      const ret = x.tipo === 'retirada';
+      return '<div class="item" role="button" tabindex="0" data-act="mov-abrir" data-id="' + esc(x.id) + '" data-meta="' + esc(mt.id) + '" data-esc="' + mt.escopo + '"><span class="ico">' + (ret ? '↩️' : '🐷') + '<span class="dot" style="background:' + esc(p.cor) + '"></span></span>' +
+        '<div style="min-width:0"><div class="t">' + (ret ? 'Retirada' : 'Guardou') + ' · ' + esc(p.nome) + '</div><div class="s">' + esc(dataCurta(x.data) + (x.obs ? ' · ' + x.obs : '')) + '</div></div>' +
+        '<span class="r"><span class="val ' + (ret ? 'neg' : 'pos') + '">' + (ret ? '−' : '+') + ' ' + fmt(x.valor) + '</span></span></div>';
+    }).join('') + '</div>');
+  }
+
+  function formMov(tipo, item, mt) {
+    const editar = !!item;
+    if (editar && mt.escopo === 'casal' && item.autor !== S.uid) {
+      const p = pessoa(item.autor);
+      return abrirModal('Movimentação', '<div class="who">' + avatar(p) + '<div><div class="name">' + (item.tipo === 'retirada' ? 'Retirada' : 'Guardou') + ' ' + fmt(item.valor) + '</div><div class="sub">' + esc(p.nome) + ' · ' + esc(dataCurta(item.data)) + '</div></div></div>' + (item.obs ? '<p class="sub" style="margin:0">' + esc(item.obs) + '</p>' : '') + '<div class="note">Só ' + esc(p.nome) + ' pode alterar esta movimentação.</div>');
+    }
+    tipo = (item && item.tipo) || tipo || 'deposito';
+    const lista = todasMetas();
+    const corpo = '<form id="f-mov" class="field" style="gap:14px" novalidate>' +
+      (editar ? '' : '<div class="field"><label for="m-meta">Meta</label><select class="input" id="m-meta">' + lista.map((x) => '<option value="' + x.escopo + ':' + esc(x.id) + '"' + (mt && mt.id === x.id && mt.escopo === x.escopo ? ' selected' : '') + '>' + esc(x.ico + ' ' + x.nome + (x.escopo === 'meu' ? ' (minha)' : '')) + '</option>').join('') + '</select></div>') +
+      '<div class="field"><span>Movimento</span>' + seg('mt', [['deposito', 'Guardar'], ['retirada', 'Retirar']], tipo) + '</div>' +
+      '<div class="field"><label for="m-valor">Valor</label><div class="money-in"><span>R$</span><input id="m-valor" inputmode="decimal" autocomplete="off" placeholder="0,00" value="' + (item ? fmtInput(item.valor) : '') + '"></div></div>' +
+      '<div class="two"><div class="field"><label for="m-data">Data</label><input class="input" type="date" id="m-data" value="' + esc(item ? item.data : hojeISO()) + '"></div>' +
+      '<div class="field"><label for="m-obs">Observação</label><input class="input" id="m-obs" maxlength="60" placeholder="Opcional" value="' + esc(item ? item.obs || '' : '') + '"></div></div>' +
+      '<div class="err" id="m-err" hidden></div><button class="btn block" type="submit">' + (editar ? 'Salvar' : 'Confirmar') + '</button>' +
+      (editar ? '<button class="btn danger" type="button" id="m-del">Excluir</button>' : '') + '</form>';
+    abrirModal(editar ? 'Editar movimentação' : 'Guardar ou retirar', corpo, (el) => {
+      const f = $('#f-mov', el);
+      const alvo = () => {
+        if (editar) return mt;
+        const [esc2, id] = $('#m-meta', el).value.split(':');
+        return acharMeta(id, esc2);
+      };
+      const colDe = (m2) => (m2.escopo === 'casal' ? S.db.collection('cofrinho') : S.db.collection('usuarios/' + S.uid + '/metasMov'));
+      f.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const valor = FL.parseValor($('#m-valor', el).value);
+        const data = $('#m-data', el).value;
+        const err = $('#m-err', el);
+        const m2 = alvo();
+        if (!m2) { err.hidden = false; err.textContent = 'Crie uma meta primeiro.'; return; }
+        if (!(valor > 0)) { err.hidden = false; err.textContent = 'Informe um valor maior que zero.'; return; }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) { err.hidden = false; err.textContent = 'Escolha a data.'; return; }
+        const doc = { tipo: radio(f, 'mt'), valor, data, mes: FL.mesDe(data), obs: $('#m-obs', el).value.trim(), autor: S.uid, metaId: m2.id };
+        const btn = f.querySelector('button[type=submit]'); btn.disabled = true;
+        const ok = editar
+          ? await escrever(() => colDe(m2).doc(item.id).update(doc), 'Movimentação atualizada')
+          : await escrever(() => colDe(m2).add(Object.assign(doc, { criadoEm: Date.now() })), doc.tipo === 'retirada' ? 'Retirada registrada' : 'Guardado em ' + m2.nome);
+        if (ok) { fecharModal(); agendarSync(); } else btn.disabled = false;
+      });
+      const d = $('#m-del', el);
+      if (d) d.addEventListener('click', async () => {
+        if (!d.dataset.armed) { d.dataset.armed = '1'; d.textContent = 'Toque de novo para excluir'; return; }
+        d.disabled = true;
+        if (await escrever(() => colDe(mt).doc(item.id).delete(), 'Movimentação excluída')) { fecharModal(); agendarSync(); }
+      });
+    });
+  }
+
+  /* ---------- busca ---------- */
+  function viewBusca() {
+    const b = S.busca;
+    const opt = (v, n, cur) => '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(n) + '</option>';
+    return '<div class="sec-head"><h2>Buscar lançamentos</h2><button class="link" type="button" data-act="busca-limpar" id="busca-limpar"' + (buscaMudou() ? '' : ' hidden') + '>Limpar</button></div>' +
+      '<section class="card"><form id="f-busca" class="field" style="gap:10px" novalidate onsubmit="return false">' +
+      '<div class="busca-q"><input class="input" type="search" id="busca-q" placeholder="Buscar por descrição, categoria ou valor" value="' + esc(b.q) + '" autocomplete="off" enterkeyhint="search"></div>' +
+      '<div class="busca-f">' +
+      '<select class="input" id="bf-onde" aria-label="Onde">' + opt('tudo', 'Meus e do casal', b.onde) + opt('meu', 'Só meus', b.onde) + opt('casal', 'Só do casal', b.onde) + '</select>' +
+      '<select class="input" id="bf-periodo" aria-label="Período">' + opt('mes', 'Só este mês', b.periodo) + opt('3', '3 meses', b.periodo) + opt('12', '12 meses', b.periodo) + opt('tudo', 'Tudo', b.periodo) + '</select>' +
+      '<select class="input" id="bf-status" aria-label="Situação">' + opt('todas', 'Pagas e a pagar', b.status) + opt('pendente', 'Só em aberto', b.status) + opt('pago', 'Só pagas', b.status) + '</select>' +
+      '<select class="input" id="bf-tipo" aria-label="Tipo">' + opt('todos', 'Tudo', b.tipo) + opt('despesa', 'Despesas', b.tipo) + opt('receita', 'Receitas', b.tipo) + '</select>' +
+      '<select class="input" id="bf-cat" aria-label="Categoria">' + opt('', 'Categoria', b.cat) + catalogo().grupos.map((g) => '<optgroup label="' + esc(g.nome) + '">' + catalogo().cats.filter((c) => c.grupo === g.id).map((c) => opt(c.id, c.ico + ' ' + c.nome, b.cat)).join('') + '</optgroup>').join('') + '</select>' +
+      '<select class="input" id="bf-pag" aria-label="Pagamento">' + opt('', 'Pagamento', b.pag) + PAGS.map(([k, n]) => opt(k, n, b.pag)).join('') + S.cartoes.map((c) => opt('c:' + c.id, '💳 ' + c.nome, b.pag)).join('') + '</select>' +
+      '</div></form></section><div id="busca-res">' + resultadosBusca() + '</div>';
+  }
+  function buscaMudou() { const b = S.busca; return !!(b.onde !== 'tudo' || b.periodo !== '12' || b.status !== 'todas' || b.tipo !== 'todos' || b.cat || b.pag || b.q); }
+  function resultadosBusca() {
+    const b = S.busca;
+    const q = FL.normalizar(b.q);
+    const ini = b.periodo === 'mes' ? S.mes : b.periodo === '3' ? FL.addMeses(S.mes, -2) : b.periodo === '12' ? FL.addMeses(S.mes, -11) : '0000-00';
+    const fim = b.periodo === 'tudo' ? '9999-99' : S.mes;
+    const fonte = (b.onde !== 'casal' ? S.meus.map((l) => ({ l, src: 'meu' })) : []).concat(b.onde !== 'meu' ? S.conj.map((l) => ({ l, src: 'conj' })) : []);
+    const res = fonte.filter(({ l }) => {
+      if (l.mes < ini || l.mes > fim) return false;
+      if (b.status !== 'todas' && (l.status === 'pendente' ? 'pendente' : 'pago') !== b.status) return false;
+      if (b.tipo !== 'todos' && (l.tipo === 'receita' ? 'receita' : 'despesa') !== b.tipo) return false;
+      if (b.cat && l.cat !== b.cat) return false;
+      if (b.pag) { if (b.pag.startsWith('c:')) { if (l.cartaoId !== b.pag.slice(2)) return false; } else if ((l.pag || '') !== b.pag) return false; }
+      if (q) {
+        const alvo = FL.normalizar(l.desc + ' ' + cat(l.cat).nome + ' ' + fmtInput(l.valor) + ' ' + String(l.valor));
+        if (!q.split(/\s+/).every((p) => alvo.includes(p))) return false;
+      }
+      return true;
+    }).sort((a, z) => z.l.mes.localeCompare(a.l.mes) || z.l.data.localeCompare(a.l.data));
+    if (!res.length) return '<section class="card"><div class="empty">Nada encontrado com esses filtros.</div></section>';
+    const desp = FL.r2(res.filter((x) => x.l.tipo !== 'receita').reduce((t, x) => t + x.l.valor, 0));
+    const rec = FL.r2(res.filter((x) => x.l.tipo === 'receita').reduce((t, x) => t + x.l.valor, 0));
+    let h = '<section class="card"><div class="stats"><div class="stat"><span class="k">Encontrados</span><span class="v">' + res.length + '</span></div><div class="stat"><span class="k">Despesas</span><span class="v neg">' + fmt(desp) + '</span></div><div class="stat"><span class="k">Receitas</span><span class="v pos">' + fmt(rec) + '</span></div></div></section>';
+    const porMes = {};
+    res.slice(0, 400).forEach((x) => { (porMes[x.l.mes] = porMes[x.l.mes] || []).push(x); });
+    h += Object.keys(porMes).sort().reverse().map((mm) => {
+      const xs = porMes[mm];
+      const t = FL.r2(xs.reduce((s, x) => s + (x.l.tipo === 'receita' ? x.l.valor : -x.l.valor), 0));
+      return '<section class="card"><div class="card-head"><h2>' + esc(nomeMes(mm)) + '</h2><span class="sub">' + xs.length + ' · ' + (t >= 0 ? '+' : '−') + ' ' + fmt(Math.abs(t)) + '</span></div><div class="list">' + xs.map((x) => itemHTML(x.l, x.src, true)).join('') + '</div></section>';
+    }).join('');
+    if (res.length > 400) h += '<div class="hint">Mostrando os 400 mais recentes. Use os filtros para refinar.</div>';
+    return h;
+  }
+  function montarBusca() {
+    const f = $('#f-busca');
+    if (!f || f.dataset.ok) return;
+    f.dataset.ok = '1';
+    const ler = () => {
+      Object.assign(S.busca, { q: $('#busca-q').value, onde: $('#bf-onde').value, periodo: $('#bf-periodo').value, status: $('#bf-status').value, tipo: $('#bf-tipo').value, cat: $('#bf-cat').value, pag: $('#bf-pag').value });
+      $('#busca-res').innerHTML = resultadosBusca();
+      $('#busca-limpar').hidden = !buscaMudou();
+    };
+    let t = 0;
+    f.addEventListener('input', () => { clearTimeout(t); t = setTimeout(ler, 150); });
+    f.addEventListener('change', ler);
+    if (!S.busca.q && window.matchMedia('(min-width: 640px)').matches) $('#busca-q').focus();
+  }
+
+  /* ---------- lançamento rápido por texto ou voz ---------- */
+  let rapidoDrafts = [];
+  function ctxRapido() { return { hoje: hojeISO(), cats: catalogo().cats, cartoes: S.cartoes }; }
+  function chipsDraft(d) {
+    const c = cat(d.cat);
+    const k = d.pag === 'cartao' ? cartaoDe(d.cartaoId) : null;
+    const partes = [d.destino === 'casal' ? '👥 casal' : '🔒 meu', d.tipo === 'receita' ? 'receita' : null, d.data === hojeISO() ? 'hoje' : dataCurta(d.data).slice(0, 5),
+      k ? '💳 ' + k.nome + (d.cartaoIncerto ? '?' : '') : d.pag ? (PAGS.find((p) => p[0] === d.pag) || [0, d.pag])[1] : null,
+      d.parcelas > 1 ? d.parcelas + '×' : null, d.status === 'pendente' ? 'a pagar' : null].filter(Boolean);
+    return '<div class="rd-item' + (d.erro ? ' erro' : '') + '"><span class="ico">' + c.ico + '</span><div style="min-width:0"><div class="t">' + esc(d.desc || c.nome) + '</div><div class="s">' + esc(c.nome) + ' · ' + esc(partes.join(' · ')) + '</div>' + (d.erro ? '<div class="err">' + esc(d.erro) + ' — toque em Editar.</div>' : '') + '</div>' +
+      '<span class="r"><span class="val ' + (d.tipo === 'receita' ? 'pos' : '') + '">' + (d.valor ? fmt(d.valor) : '—') + '</span></span></div>';
+  }
+  function desenharDrafts(el) {
+    const box = $('#rp-lista', el);
+    const ok = rapidoDrafts.filter((d) => !d.erro);
+    box.innerHTML = rapidoDrafts.length ? rapidoDrafts.map((d, i) => '<div class="rd-wrap">' + chipsDraft(d) + '<div class="rd-acts"><button class="link" type="button" data-act="rp-editar" data-i="' + i + '">Editar</button><button class="link" type="button" data-act="rp-tirar" data-i="' + i + '">Remover</button></div></div>').join('') +
+      (ok.length ? '<button class="btn block" type="button" id="rp-lancar">Lançar ' + (ok.length === 1 ? 'este' : 'os ' + ok.length) + '</button>' : '') : '';
+    const b = $('#rp-lancar', el);
+    if (b) b.addEventListener('click', async () => {
+      b.disabled = true;
+      let n = 0;
+      for (const d of rapidoDrafts.filter((x) => !x.erro)) { b.textContent = 'Lançando ' + (n + 1) + '/' + ok.length + '…'; if (await salvarRascunho(d)) n++; else break; }
+      rapidoDrafts = [];
+      fecharModal(); agendarSync(); render();
+      toast(n === 1 ? 'Lançado' : n + ' lançamentos criados');
+    });
+  }
+  async function salvarRascunho(d) {
+    const casalD = d.destino === 'casal';
+    const tipo = casalD ? 'despesa' : d.tipo;
+    const coll = casalD ? S.db.collection('conjunto') : meusCol();
+    const usaCartao = tipo !== 'receita' && d.pag === 'cartao' && cartaoDe(d.cartaoId);
+    const serie = FL.gerarSerie(d.valor, d.parcelas || 1, d.parcelas > 1 ? 'parcelada' : 'unica', d.data);
+    const grupo = serie.length > 1 ? 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) : null;
+    let ok = true;
+    for (let i = 0; i < serie.length && ok; i++) {
+      const it = serie[i];
+      let doc = { kind: 'lanc', tipo, desc: d.desc || cat(d.cat).nome, valor: it.valor, cat: d.cat, data: it.data, mes: FL.mesDe(it.data), status: i === 0 ? d.status : 'pendente', parcela: it.parcela, grupo, autor: S.uid, criadoEm: Date.now(), pag: tipo === 'receita' ? null : (d.pag || null), cartaoId: null, divisao: casalD ? 'padrao' : null };
+      if (usaCartao) { doc = noCartao(doc, d.data, d.cartaoId, i); doc.status = 'pendente'; }
+      ok = await escrever(() => coll.add(doc));
+    }
+    return ok;
+  }
+  function formRapido(manter) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const corpo = '<div class="field" style="gap:10px"><label for="rp-texto" class="sub">Escreva ou fale como você falaria. Dá para lançar vários de uma vez.</label>' +
+      '<textarea class="input" id="rp-texto" rows="3" placeholder="mercado 230 casal&#10;uber 25 ontem e ifood 48,90 no pix&#10;tênis 600 em 3x no cartão&#10;recebi salário 5 mil dia 5"></textarea>' +
+      '<div class="btn-row">' + (SR ? '<button class="btn ghost" type="button" id="rp-mic">🎙️ Falar</button>' : '') + '<button class="btn" type="button" id="rp-ler">Interpretar</button></div>' +
+      (SR ? '' : '<div class="hint">Para ditar, use o microfone do teclado do celular.</div>') +
+      '<div id="rp-lista" class="rd-lista"></div></div>';
+    abrirModal('⚡ Lançamento rápido', corpo, (el) => {
+      const inp = $('#rp-texto', el);
+      const ler = () => { rapidoDrafts = FL.interpretar(inp.value, ctxRapido()); desenharDrafts(el); };
+      $('#rp-ler', el).addEventListener('click', ler);
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); ler(); } });
+      if (manter && rapidoDrafts.length) desenharDrafts(el); else rapidoDrafts = [];
+      const mic = $('#rp-mic', el);
+      let rec = null;
+      if (mic) mic.addEventListener('click', () => {
+        if (rec) { rec.stop(); return; }
+        try { rec = new SR(); } catch (e) { toast('Ditado não disponível. Use o microfone do teclado.'); return; }
+        rec.lang = 'pt-BR'; rec.interimResults = true; rec.continuous = false;
+        const base = inp.value.trim() ? inp.value.trim() + '\n' : '';
+        rec.onresult = (e) => { let txt = ''; for (const r of e.results) txt += r[0].transcript; inp.value = base + txt; };
+        rec.onerror = (e) => { toast(e.error === 'not-allowed' || e.error === 'service-not-allowed' ? 'Permita o uso do microfone para ditar.' : 'Não consegui ouvir. Tente de novo.'); };
+        rec.onend = () => { rec = null; mic.textContent = '🎙️ Falar'; mic.classList.remove('gravando'); if (inp.value.trim()) ler(); };
+        mic.textContent = '● Ouvindo… toque para parar'; mic.classList.add('gravando');
+        try { rec.start(); } catch (e) { rec = null; mic.textContent = '🎙️ Falar'; mic.classList.remove('gravando'); }
+      });
+      el.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-act^="rp-"]'); if (!b) return;
+        e.stopPropagation();
+        const i = +b.dataset.i;
+        if (b.dataset.act === 'rp-tirar') { rapidoDrafts.splice(i, 1); desenharDrafts(el); }
+        else if (b.dataset.act === 'rp-editar') {
+          const d = rapidoDrafts.splice(i, 1)[0];
+          d._rapido = true;
+          formLanc(d.destino === 'casal' ? 'conj' : 'meu', null, d);
+        }
+      }, true);
+    });
+  }
+  const botaoRapido = () => (S.canWrite !== false ? '<button class="quick" type="button" data-act="rapido"><span>⚡</span><span>Lançar rápido: “mercado 230 casal”, “uber 25 ontem”…</span><span class="mic">🎙️</span></button>' : '');
+
   /* ---------- eventos ---------- */
   document.addEventListener('click', async (e) => {
     const el = e.target.closest('[data-act]');
@@ -1747,9 +1987,13 @@ import { DB, Conta } from './firebase-shim.js';
       const l = (src === 'conj' ? S.conj : S.meus).find((x) => x.id === el.dataset.id);
       if (l) formLanc(src, l);
     }
-    else if (act === 'abrir-mov') { const x = S.cofre.find((y) => y.id === el.dataset.id); if (x) formMov(null, x); }
-    else if (act === 'cofre-novo') formMov(el.dataset.tipo);
-    else if (act === 'editar-viagem') formViagem();
+    else if (act === 'mov-novo') formMov(el.dataset.tipo, null, acharMeta(el.dataset.id, el.dataset.esc));
+    else if (act === 'mov-abrir') { const mt = acharMeta(el.dataset.meta, el.dataset.esc); const x = mt && movsDe(mt).find((y) => y.id === el.dataset.id); if (x) formMov(null, x, mt); }
+    else if (act === 'movs-ver') { const mt = acharMeta(el.dataset.id, el.dataset.esc); if (mt) verMovs(mt); }
+    else if (act === 'meta-nova') formMeta(el.dataset.esc);
+    else if (act === 'meta-editar') { const mt = acharMeta(el.dataset.id, el.dataset.esc); if (mt) formMeta(el.dataset.esc, mt); }
+    else if (act === 'rapido') formRapido(false);
+    else if (act === 'busca-limpar') { S.busca = { q: '', onde: 'tudo', periodo: '12', status: 'todas', tipo: 'todos', cat: '', pag: '' }; $('#main').innerHTML = ''; render(); }
     else if (act === 'config') formConfig();
     else if (act === 'limites') formLimites(el.dataset.esc);
     else if (act === 'cartao-novo') formCartao(null);
@@ -1787,7 +2031,7 @@ import { DB, Conta } from './firebase-shim.js';
     if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[role=button][data-act]')) { e.preventDefault(); e.target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
   });
   $('#fab').addEventListener('click', () => {
-    if (S.aba === 'viagem') return S.viagem ? formMov('deposito') : formViagem();
+    if (S.aba === 'metas') { const l = todasMetas(); return l.length ? formMov('deposito', null, l[0]) : formMeta('casal'); }
     formLanc(S.aba === 'casal' ? 'conj' : 'meu');
   });
   window.addEventListener('hashchange', () => { S.aba = lerHash(); window.scrollTo(0, 0); render(); });
@@ -1873,7 +2117,7 @@ import { DB, Conta } from './firebase-shim.js';
       S.got[chave] = true;
       if (!snap.metadata.fromCache) S.firm[chave] = true;
       if (S.got.membros && S.got.meus) clearTimeout(timer);
-      if (['meus', 'resumos', 'fixas', 'cartoes', 'limites'].includes(chave)) agendarSync();
+      if (['meus', 'resumos', 'fixas', 'cartoes', 'limites', 'metasPess', 'movPess', 'metas', 'config', 'cofre'].includes(chave)) agendarSync();
       if (chave === 'meus' || chave === 'fixas' || chave === 'conj' || chave === 'fixasCasal' || chave === 'membros' || chave === 'cartoes') agendarFixas();
       render();
     }, (err) => {
@@ -1889,7 +2133,7 @@ import { DB, Conta } from './firebase-shim.js';
     ouvintes.forEach((p) => { try { p(); } catch (e) { /* ignora */ } });
     ouvintes = [];
     clearTimeout(timer);
-    Object.assign(S, { uid: null, email: '', meus: [], conj: [], cofre: [], membros: {}, resumos: {}, cfgCasal: {}, viagem: null, acertos: {}, fixas: [], fixasCasal: [], limites: {}, limitesCasal: {}, cartoes: [], catalogo: null, rendaPrev: {}, evoSel: null, got: {}, firm: {}, timeout: false });
+    Object.assign(S, { uid: null, email: '', meus: [], conj: [], cofre: [], membros: {}, resumos: {}, cfgCasal: {}, viagem: null, acertos: {}, fixas: [], fixasCasal: [], limites: {}, limitesCasal: {}, cartoes: [], catalogo: null, rendaPrev: {}, metas: [], metasPess: [], movPess: [], evoSel: null, got: {}, firm: {}, timeout: false });
     reindexarCats();
     tentados.clear();
     fecharModal();
@@ -1905,6 +2149,9 @@ import { DB, Conta } from './firebase-shim.js';
     ouvir(db.collection('cofrinho'), 'cofre', (s) => { S.cofre = lista(s).filter((x) => x.mes && x.data); });
     ouvir(db.collection('config'), 'config', (s) => { S.cfgCasal = {}; S.viagem = null; S.limitesCasal = {}; S.catalogo = null; s.docs.forEach((d) => { if (d.id === 'casal') S.cfgCasal = d.data(); if (d.id === 'viagem') S.viagem = d.data(); if (d.id === 'limitesCasal') S.limitesCasal = d.data().limites || {}; if (d.id === 'categorias') S.catalogo = d.data(); }); reindexarCats(); });
     ouvir(fixasCol(), 'fixas', (s) => { S.fixas = lista(s); });
+    ouvir(db.collection('metas'), 'metas', (s) => { S.metas = lista(s).sort((a, b) => (a.criadoEm || 0) - (b.criadoEm || 0)); });
+    ouvir(db.collection('usuarios/' + S.uid + '/metas'), 'metasPess', (s) => { S.metasPess = lista(s).sort((a, b) => (a.criadoEm || 0) - (b.criadoEm || 0)); });
+    ouvir(db.collection('usuarios/' + S.uid + '/metasMov'), 'movPess', (s) => { S.movPess = lista(s).filter((x) => x.mes && x.data); });
     ouvir(db.collection('usuarios/' + S.uid + '/cartoes'), 'cartoes', (s) => { S.cartoes = lista(s).sort((a, b) => (a.criadoEm || 0) - (b.criadoEm || 0)); });
     ouvir(db.collection('fixasCasal'), 'fixasCasal', (s) => { S.fixasCasal = lista(s); });
     ouvir(db.collection('usuarios/' + S.uid + '/config'), 'limites', (s) => { S.limites = {}; S.rendaPrev = {}; s.docs.forEach((d) => { if (d.id === 'limites') S.limites = d.data().limites || {}; if (d.id === 'previsao') S.rendaPrev = d.data().renda || {}; }); });

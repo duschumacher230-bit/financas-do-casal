@@ -155,3 +155,29 @@ const pvAt = F.previsao({ meses: ['2026-11'], ids: ['e', 'c'], prevs: { e: { '20
 assert.strictEqual(pvAt[0].variaveis, 150);
 assert.strictEqual(F.gastoVariavel(lancP, '2026-10'), 600);
 console.log('OK — previsão sem contar duas vezes o mês atual');
+
+// lançamento rápido
+const ctxR = { hoje: '2026-11-16', cats: [{ id: 'mercado', nome: 'Mercado', grupo: 'alimentacao' }, { id: 'c_muay', nome: 'Muay Thai', grupo: 'saude' }, { id: 'salario', nome: 'Salário', grupo: 'receitas' }, { id: 'outros', nome: 'Outros', grupo: 'outros' }],
+  cartoes: [{ id: 'k1', nome: 'Mercado Pago' }, { id: 'k2', nome: 'BB' }] };
+const q = (t) => F.interpretar(t, ctxR);
+let r1 = q('mercado 230,50 casal');
+assert.strictEqual(r1.length, 1);
+assert.deepStrictEqual([r1[0].valor, r1[0].cat, r1[0].destino, r1[0].desc, r1[0].data], [230.5, 'mercado', 'casal', 'Mercado', '2026-11-16']);
+r1 = q('uber 25 ontem e ifood 48,90 no pix');
+assert.deepStrictEqual(r1.map((x) => [x.valor, x.cat, x.data, x.pag]), [[25, 'transporte', '2026-11-15', null], [48.9, 'alimentacao', '2026-11-16', 'pix']]);
+r1 = q('tênis 600 em 3x no cartão mercado pago');
+assert.deepStrictEqual([r1[0].valor, r1[0].parcelas, r1[0].pag, r1[0].cartaoId, r1[0].cat, r1[0].desc], [600, 3, 'cartao', 'k1', 'compras', 'Tênis']);
+r1 = q('recebi salário 5 mil dia 5');
+assert.deepStrictEqual([r1[0].tipo, r1[0].valor, r1[0].cat, r1[0].data], ['receita', 5000, 'salario', '2026-11-05']);
+r1 = q('mensalidade muay thai 150 a pagar dia 20');
+assert.deepStrictEqual([r1[0].cat, r1[0].status, r1[0].data, r1[0].valor], ['c_muay', 'pendente', '2026-11-20', 150]);
+r1 = q('pão e leite 18; luz 312,40 vence 25/11');
+assert.deepStrictEqual(r1.map((x) => [x.desc, x.valor, x.cat, x.data]), [['Pão e leite', 18, 'outros', '2026-11-16'], ['Luz', 312.4, 'energia', '2026-11-25']]);
+r1 = q('gasolina 1.200 no cartão');
+assert.deepStrictEqual([r1[0].valor, r1[0].pag, r1[0].cartaoIncerto], [1200, 'cartao', true]);
+assert.strictEqual(q('presente sem valor')[0].erro, 'Não achei o valor');
+{
+  const r = F.interpretar('recebi salário 5 mil dia 5\nxyz', { hoje: '2026-11-16', cats: [{ id: 'salario', nome: 'Salário', grupo: 'receitas' }], cartoes: [] });
+  assert.strictEqual(r.length, 2); assert.strictEqual(r[0].valor, 5000); assert.ok(r[1].erro);
+}
+console.log('OK — testes da entrega 3');

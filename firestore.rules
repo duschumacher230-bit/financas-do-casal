@@ -41,6 +41,11 @@ service cloud.firestore {
       allow delete: if logado() && resource.data.autor == request.auth.uid;
     }
 
+    // Metas do casal (além da viagem): os dois criam e editam
+    match /metas/{id} {
+      allow read, write: if logado();
+    }
+
     // Configurações do casal, meta da viagem e acertos do mês
     match /config/{id} {
       allow read, write: if logado();

@@ -297,11 +297,11 @@
       if (quem === 'casal') {
         renda = ids.reduce((s, id) => s + (rm(id).renda || 0), 0);
         gastos = ids.reduce((s, id) => s + (rm(id).despesas || 0), 0) + cj.total;
-        guardado = ids.reduce((s, id) => s + (gm[id] || 0), 0);
+        guardado = ids.reduce((s, id) => s + (gm[id] || 0) + (rm(id).metas || 0), 0);
       } else {
         renda = rm(quem).renda || 0;
         gastos = (rm(quem).despesas || 0) + (cj.parte[quem] || 0);
-        guardado = gm[quem] || 0;
+        guardado = (gm[quem] || 0) + (rm(quem).metas || 0);
       }
       renda = r2(renda); gastos = r2(gastos); guardado = r2(guardado);
       return { mes: m, renda, gastos, guardado, sobra: r2(renda - gastos - guardado) };
@@ -376,6 +376,7 @@
         const p = (prevs[id] || {})[m] || {};
         renda += p.renda || 0;
         comp += (p.despesas || 0) + (cj.parte[id] || 0);
+        metas += p.metas || 0;
         if (incluirVar) {
           /* no mês atual, só o que ainda falta gastar em relação à média (o que já foi gasto já está nas despesas) */
           const pess = m === mesHoje ? Math.max(0, (varMedias[id] || 0) - (varAtuais[id] || 0)) : (varMedias[id] || 0);
@@ -384,12 +385,142 @@
         }
         if (quem !== 'casal') metas += ((metasPorMes || {})[m] || 0) * (div.pct[id] || 0);
       }
-      if (quem === 'casal') metas = (metasPorMes || {})[m] || 0;
+      if (quem === 'casal') metas += (metasPorMes || {})[m] || 0;
       renda = r2(renda); comp = r2(comp); vari = r2(vari); metas = r2(metas);
       const sobra = r2(renda - comp - vari - metas);
       return { mes: m, renda, compromissos: comp, variaveis: vari, metas, sobra, pct: renda > 0 ? (comp + vari) / renda : null };
     });
   }
+
+
+  /* ---------- lançamento rápido por texto ---------- */
+  const KW = [
+    ['mercado', ['mercado', 'supermercado', 'feira', 'atacadao', 'assai', 'hortifruti', 'acougue', 'sacolao']],
+    ['alimentacao', ['ifood', 'restaurante', 'lanche', 'lanchonete', 'pizza', 'hamburguer', 'burguer', 'almoco', 'jantar', 'delivery', 'cafe', 'padaria', 'sorvete', 'acai', 'churrasco', 'marmita']],
+    ['transporte', ['uber', 'gasolina', 'combustivel', 'posto', 'estacionamento', 'pedagio', 'onibus', 'etanol', 'diesel', 'taxi', 'abasteci']],
+    ['energia', ['luz', 'energia', 'energisa']],
+    ['agua', ['agua', 'caerd', 'saneamento']],
+    ['internet', ['internet', 'wifi', 'celular', 'telefone', 'vivo', 'claro', 'tim']],
+    ['moradia', ['aluguel', 'financiamento', 'condominio']],
+    ['diarista', ['diarista', 'faxina', 'faxineira']],
+    ['gas', ['gas', 'botijao']],
+    ['iptu', ['iptu']],
+    ['saude', ['farmacia', 'remedio', 'medico', 'consulta', 'exame', 'dentista', 'plano de saude', 'hospital', 'drogaria']],
+    ['academia', ['academia', 'suplemento', 'whey']],
+    ['esportes', ['muay thai', 'muay', 'jiu', 'luta', 'futebol', 'crossfit', 'natacao']],
+    ['cuidados', ['cabelo', 'barbearia', 'barbeiro', 'salao', 'unha', 'manicure', 'perfume', 'estetica']],
+    ['lazer', ['cinema', 'show', 'bar', 'balada', 'festa', 'lazer', 'passeio', 'ingresso', 'cerveja']],
+    ['compras', ['roupa', 'tenis', 'loja', 'shopping', 'amazon', 'shopee', 'mercado livre', 'magalu', 'calcado', 'camisa']],
+    ['presentes', ['presente', 'aniversario']],
+    ['viagem', ['viagem', 'hotel', 'passagem', 'airbnb', 'pousada']],
+    ['pets', ['pet', 'racao', 'veterinario', 'petshop']],
+    ['assinaturas', ['netflix', 'spotify', 'prime video', 'amazon prime', 'disney', 'youtube', 'assinatura', 'streaming', 'icloud', 'chatgpt', 'hbo', 'globoplay', 'deezer']],
+    ['educacao', ['curso', 'faculdade', 'livro', 'escola', 'mensalidade']],
+    ['seguro_carro', ['seguro']],
+    ['ipva', ['ipva', 'licenciamento', 'detran']],
+    ['manutencao', ['mecanico', 'oficina', 'pneu', 'revisao', 'oleo', 'lavagem', 'lava jato']],
+  ];
+  const KW_REC = [['salario', ['salario']], ['prolabore', ['pro labore', 'prolabore', 'pro-labore']], ['comissao', ['comissao']], ['rendimentos', ['rendimento', 'juros', 'dividendo']]];
+  const temPalavra = (t, w) => new RegExp('(^|[^a-z0-9])' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^a-z0-9]|$)').test(t);
+
+  function dataRelativa(hoje, n) {
+    const [y, m, d] = hoje.split('-').map(Number);
+    const dt = new Date(y, m - 1, d + n);
+    return dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate());
+  }
+
+  /* Divide "mercado 230 e uber 25; salário 5000" em partes; partes sem número juntam com a próxima */
+  function dividirTexto(texto) {
+    const out = [];
+    for (const linha of String(texto || '').split(/[;\n]+/)) {
+      const brutas = linha.split(/\s+e\s+|,\s+(?=[^\d\s])/i).map((x) => x.trim()).filter(Boolean);
+      const daLinha = [];
+      let pend = '';
+      for (const b of brutas) {
+        const juntar = (pend ? pend + ' e ' : '') + b;
+        if (/\d/.test(b)) { daLinha.push(juntar); pend = ''; } else pend = juntar;
+      }
+      if (pend) { if (daLinha.length) daLinha[daLinha.length - 1] += ' e ' + pend; else daLinha.push(pend); }
+      out.push(...daLinha);
+    }
+    return out;
+  }
+
+  /* ctx: { hoje: 'AAAA-MM-DD', cats: [{id, nome, grupo, oculta}], cartoes: [{id, nome}] } */
+  function interpretarUm(seg, ctx) {
+    const original = seg;
+    let t = normalizar(seg);
+    const r = { texto: original, tipo: 'despesa', destino: 'pessoal', status: 'pago', pag: null, cartaoId: null, parcelas: 1, data: ctx.hoje, valor: null, cat: null };
+    // data
+    let m;
+    if (temPalavra(t, 'anteontem')) { r.data = dataRelativa(ctx.hoje, -2); t = t.replace(/anteontem/g, ' '); }
+    else if (temPalavra(t, 'ontem')) { r.data = dataRelativa(ctx.hoje, -1); t = t.replace(/\bontem\b/g, ' '); }
+    else if (temPalavra(t, 'amanha')) { r.data = dataRelativa(ctx.hoje, 1); t = t.replace(/\bamanha\b/g, ' '); }
+    if (temPalavra(t, 'hoje')) t = t.replace(/\bhoje\b/g, ' ');
+    if ((m = t.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/))) {
+      const y = m[3] ? (m[3].length === 2 ? '20' + m[3] : m[3]) : ctx.hoje.slice(0, 4);
+      const d = Math.min(+m[1], diasNoMes(+y, +m[2]));
+      if (+m[2] >= 1 && +m[2] <= 12 && d >= 1) r.data = y + '-' + pad(+m[2]) + '-' + pad(d);
+      t = t.replace(m[0], ' ');
+    } else if ((m = t.match(/\bdia (\d{1,2})\b/))) {
+      const [y, mm] = ctx.hoje.split('-').map(Number);
+      const d = Math.min(+m[1], diasNoMes(y, mm));
+      if (d >= 1) r.data = ctx.hoje.slice(0, 7) + '-' + pad(d);
+      t = t.replace(m[0], ' ');
+    }
+    // parcelas
+    if ((m = t.match(/\b(?:em\s+)?(\d{1,2})\s*(?:x|vezes|parcelas)\b/))) { const n = +m[1]; if (n >= 2 && n <= 60) r.parcelas = n; t = t.replace(m[0], ' '); }
+    // valor ("5 mil", "R$ 1.234,56", "45,90", "55.90", "230")
+    if ((m = t.match(/(\d+(?:[.,]\d+)?)\s*mil\b/))) { r.valor = r2(parseValor(m[1]) * 1000); t = t.replace(m[0], ' '); }
+    else if ((m = t.match(/(?:r\$\s*)?(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)(?![\d\/])/))) { r.valor = parseValor(m[1]); t = t.replace(m[0], ' '); }
+    t = t.replace(/\b(reais|real|conto|contos|pila|r\$)\b/g, ' ');
+    // casal / receita / pendente
+    if (/\b(casal|nosso|nossa|nossos|nossas|juntos|dividir|dividido|compartilhado)\b/.test(t)) { r.destino = 'casal'; t = t.replace(/\b(do casal|no casal|casal|nosso|nossa|nossos|nossas|juntos|dividir|dividido|compartilhado)\b/g, ' '); }
+    if (/\b(recebi|receita|ganhei|entrou|reembolso|salario|pro labore|prolabore|comissao|rendimento|dividendo)\b/.test(t)) r.tipo = 'receita';
+    if (r.destino === 'casal') r.tipo = 'despesa';
+    if (/\b(a pagar|vence|vencimento|pendente|pagar dia|vou pagar)\b/.test(t)) { r.status = 'pendente'; t = t.replace(/\b(a pagar|vence|vencimento|pendente|pagar dia|vou pagar)\b/g, ' '); }
+    // pagamento
+    if (r.tipo !== 'receita') {
+      const cards = (ctx.cartoes || []).map((c) => ({ c, n: normalizar(c.nome) })).filter((x) => x.n);
+      const achado = cards.filter((x) => t.includes(x.n)).sort((a, b) => b.n.length - a.n.length)[0];
+      const falaCartao = /\b(cartao|credito)\b/.test(t);
+      if (achado) { r.pag = 'cartao'; r.cartaoId = achado.c.id; t = t.replace(achado.n, ' '); }
+      else if (falaCartao && cards.length) { r.pag = 'cartao'; r.cartaoId = cards[0].c.id; r.cartaoIncerto = cards.length > 1; }
+      t = t.replace(/\b(no|na|pelo|pela)?\s*(cartao de credito|cartao|credito)\b/g, ' ');
+      if (!r.pag) {
+        if (/\bpix\b/.test(t)) r.pag = 'pix';
+        else if (/\bdebito\b/.test(t)) r.pag = 'debito';
+        else if (/\b(dinheiro|especie)\b/.test(t)) r.pag = 'dinheiro';
+        else if (/\bboleto\b/.test(t)) r.pag = 'boleto';
+      }
+      t = t.replace(/\b(no|na|pelo|pela|via|em|de)?\s*(pix|debito|dinheiro|especie|boleto)\b/g, ' ');
+    }
+    // categoria: primeiro os nomes do catálogo (inclui categorias criadas), depois palavras-chave
+    const tipoCat = r.tipo === 'receita' ? 'receitas' : null;
+    const cats = (ctx.cats || []).filter((c) => !c.oculta && (tipoCat ? c.grupo === 'receitas' : c.grupo !== 'receitas'));
+    const porNome = cats.map((c) => ({ c, n: normalizar(c.nome) })).filter((x) => x.n.length >= 3 && temPalavra(t, x.n)).sort((a, b) => b.n.length - a.n.length)[0];
+    if (porNome) r.cat = porNome.c.id;
+    else {
+      for (const [id, ws] of (r.tipo === 'receita' ? KW_REC : KW)) { if (ws.some((w) => temPalavra(t, w))) { r.cat = id; break; } }
+    }
+    if (!r.cat) r.cat = r.tipo === 'receita' ? 'extra' : 'outros';
+    // descrição: o que sobrou do texto original, sem números e palavras de comando
+    let desc = original
+      .replace(/r\$\s*/gi, '')
+      .replace(/(\d+(?:[.,]\d+)?)\s*mil\b/gi, ' ')
+      .replace(/\b(?:em\s+)?\d{1,2}\s*(?:x|vezes|parcelas)\b/gi, ' ')
+      .replace(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g, ' ')
+      .replace(/\bdia \d{1,2}\b/gi, ' ')
+      .replace(/\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?/g, ' ');
+    const tirar = ['anteontem', 'ontem', 'hoje', 'amanhã', 'amanha', 'reais', 'real', 'conto', 'contos', 'pila', 'do casal', 'no casal', 'casal', 'juntos', 'dividir', 'dividido', 'compartilhado', 'a pagar', 'vence', 'pendente', 'vou pagar', 'cartão de crédito', 'cartao de credito', 'cartão', 'cartao', 'crédito', 'credito', 'pix', 'débito', 'debito', 'dinheiro', 'espécie', 'boleto', 'paguei', 'gastei', 'comprei', 'recebi', 'ganhei', 'entrou'];
+    (ctx.cartoes || []).forEach((c) => { if (r.cartaoId === c.id) tirar.push(c.nome); });
+    tirar.sort((a, b) => b.length - a.length).forEach((w) => { desc = desc.replace(new RegExp('(^|[^\\p{L}])' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=[^\\p{L}]|$)', 'giu'), '$1 '); });
+    desc = desc.replace(/\s+/g, ' ').trim().replace(/^(no|na|de|do|da|com|em|pra|para|pelo|pela|o|a)\s+/i, '').replace(/\s+(no|na|de|do|da|com|em|pra|para|pelo|pela|via)$/i, '').trim();
+    r.desc = desc ? desc.charAt(0).toUpperCase() + desc.slice(1) : '';
+    if (!(r.valor > 0)) r.erro = 'Não achei o valor';
+    return r;
+  }
+  function interpretar(texto, ctx) { return dividirTexto(texto).map((s) => interpretarUm(s, ctx)); }
 
   /* ---------- visão do ano ---------- */
   function anoCategorias(lancs, ano, filtro) {
@@ -409,6 +540,6 @@
     return { total: t, media: n ? r2(t / n) : 0 };
   }
 
-  const api = { r2, pad, mesDe, addMeses, difMeses, diasNoMes, addMesesData, parseValor, gerarSerie, resumoPessoal, stable, divisao, pctItem, conjuntoMes, cofrinho, cartaoPessoa, porCategoria, idFixa, fixasAGerar, orcamento, evolucao, mesFatura, vencFatura, normalizar, mediaVariavel, gastoVariavel, projecao, previsao, anoCategorias, totalMedia };
+  const api = { r2, pad, mesDe, addMeses, difMeses, diasNoMes, addMesesData, parseValor, gerarSerie, resumoPessoal, stable, divisao, pctItem, conjuntoMes, cofrinho, cartaoPessoa, porCategoria, idFixa, fixasAGerar, orcamento, evolucao, mesFatura, vencFatura, normalizar, mediaVariavel, gastoVariavel, projecao, previsao, anoCategorias, totalMedia, interpretar, dividirTexto };
   root.FL = api;
 })(typeof window !== 'undefined' ? window : globalThis);

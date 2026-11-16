@@ -306,6 +306,29 @@ nav.tabs a { font-size: 11px; }
 .rel-hero { display: grid; gap: 4px; justify-items: start; }
 .rel-h { font-size: 15px; margin-top: 4px; }
 .rowkv .v .tag { margin-left: 4px; font-size: 11px; }
+.top-acts { display: flex; gap: 8px; }
+.sec-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 2px 0; }
+.sec-head h2 { font-size: 17px; }
+.meta-ico { width: 40px; height: 40px; border-radius: 12px; background: var(--accent-soft); display: grid; place-items: center; font-size: 22px; flex: none; }
+.meta-mini { display: grid; gap: 4px; }
+.meta-mini + .meta-mini { border-top: 1px solid var(--line); padding-top: 10px; }
+.busca-f { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.busca-f .input { font-size: 14px; padding: 9px 10px; }
+@media (max-width: 380px) { .busca-f { grid-template-columns: 1fr; } }
+.quick { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 12px 14px; border-radius: 14px; border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--line)); background: color-mix(in srgb, var(--accent-soft) 60%, var(--surface)); color: var(--muted); font-size: 14px; cursor: pointer; }
+.quick span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quick .mic { font-size: 16px; }
+.quick.sm { padding: 9px 12px; font-size: 13px; color: var(--accent); font-weight: 600; }
+.rd-lista { display: grid; gap: 8px; }
+.rd-wrap { border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; display: grid; gap: 4px; background: var(--bg); }
+.rd-item { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.rd-item .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rd-item .s { font-size: 12px; color: var(--muted); }
+.rd-item .val { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rd-item.erro .t { color: var(--neg); }
+.rd-acts { display: flex; gap: 16px; justify-content: flex-end; font-size: 13px; }
+.btn.gravando { background: color-mix(in srgb, var(--neg) 16%, transparent); color: var(--neg); }
+textarea.input { resize: vertical; min-height: 84px; font-family: var(--font-body); line-height: 1.4; }
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(150px + env(safe-area-inset-bottom)); z-index: 30; background: var(--ink); color: var(--surface); padding: 10px 16px; border-radius: 12px; font-size: 14px; font-weight: 600; max-width: calc(100% - 32px); box-shadow: var(--shadow); }
 .banner { border-radius: 12px; padding: 10px 12px; background: color-mix(in srgb, var(--warn) 14%, var(--surface)); color: var(--ink); font-size: 13px; border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); }
 .center-screen { min-height: 70vh; display: grid; place-items: center; }
@@ -328,6 +351,6 @@ nav.tabs a { font-size: 11px; }
 <div id="modal"></div>
 <div id="toast"></div>
 
-<script type="module" src="app.js?v=mwjqctyp"></script>
+<script type="module" src="app.js?v=mwjqppry"></script>
 </body>
 </html>
