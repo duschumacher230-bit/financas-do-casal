@@ -198,7 +198,79 @@
     return Object.entries(out).sort((x, y) => y[1] - x[1]);
   }
 
-  const api = { r2, mesDe, addMeses, difMeses, addMesesData, parseValor, gerarSerie, resumoPessoal, stable, divisao, conjuntoMes, cofrinho, cartaoPessoa, porCategoria };
-  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  /* ---------- contas fixas ---------- */
+  const idFixa = (fixaId, mes) => 'fx_' + fixaId + '_' + mes;
+
+  /* Quais lançamentos das contas fixas ainda faltam criar, de "inicio" até "mesAte".
+     existentes: Set com os ids já criados. Meses em "pulados" (excluídos pelo usuário) não voltam. */
+  function fixasAGerar(fixas, existentes, mesAte, mesHoje) {
+    const out = [];
+    for (const f of fixas || []) {
+      if (!f || !f.id || f.ativa === false || !f.inicio || !(f.valor > 0)) continue;
+      const fim = f.fim && f.fim < mesAte ? f.fim : mesAte;
+      const pulados = f.pulados || [];
+      let m = f.inicio;
+      for (let guarda = 0; m <= fim && guarda < 120; guarda++, m = addMeses(m, 1)) {
+        const id = idFixa(f.id, m);
+        if (existentes.has(id) || pulados.includes(m)) continue;
+        const [y, mm] = m.split('-').map(Number);
+        const dia = Math.min(Math.max(1, Math.floor(f.dia || 1)), diasNoMes(y, mm));
+        out.push({ id, fixa: f, mes: m, data: m + '-' + pad(dia), status: mesHoje && m < mesHoje ? 'pago' : 'pendente' });
+      }
+    }
+    return out;
+  }
+
+  /* ---------- limites por categoria ---------- */
+  function orcamento(gastos, limites) {
+    const g = {};
+    for (const [c, v] of gastos || []) g[c] = v;
+    const lim = {};
+    for (const c in limites || {}) if (limites[c] > 0) lim[c] = limites[c];
+    const cats = Array.from(new Set(Object.keys(g).concat(Object.keys(lim))));
+    const linhas = cats.map((c) => {
+      const gasto = r2(g[c] || 0);
+      const limite = lim[c] || null;
+      if (!limite) return { cat: c, gasto, limite: null, pct: null, status: 'sem', sobra: null };
+      const pct = gasto / limite;
+      const status = pct > 1 ? 'estourou' : pct >= 0.8 ? 'perto' : 'ok';
+      return { cat: c, gasto, limite, pct, status, sobra: r2(limite - gasto) };
+    });
+    const ordem = { estourou: 0, perto: 1, ok: 2, sem: 3 };
+    linhas.sort((a, b) => ordem[a.status] - ordem[b.status] || b.gasto - a.gasto);
+    const comLimite = linhas.filter((l) => l.limite);
+    const total = comLimite.length ? {
+      gasto: r2(comLimite.reduce((s, l) => s + l.gasto, 0)),
+      limite: r2(comLimite.reduce((s, l) => s + l.limite, 0)),
+    } : null;
+    if (total) total.sobra = r2(total.limite - total.gasto);
+    return { linhas, total, alertas: linhas.filter((l) => l.status === 'estourou' || l.status === 'perto') };
+  }
+
+  /* ---------- evolução mês a mês ---------- */
+  /* quem: 'casal' ou o id de uma pessoa. Usa só totais (resumos), então serve também para o parceiro. */
+  function evolucao(meses, ids, resumos, conj, cofre, cfg, quem) {
+    const cof = cofrinho(cofre, null, meses[meses.length - 1], ids, {});
+    return meses.map((m) => {
+      const div = divisao(m, ids, resumos, cfg);
+      const cj = conjuntoMes(conj, m, ids, div.pct);
+      const gm = cof.noMes[m] || {};
+      const rm = (id) => (resumos[id] && resumos[id].meses && resumos[id].meses[m]) || {};
+      let renda, gastos, guardado;
+      if (quem === 'casal') {
+        renda = ids.reduce((s, id) => s + (rm(id).renda || 0), 0);
+        gastos = ids.reduce((s, id) => s + (rm(id).despesas || 0), 0) + cj.total;
+        guardado = ids.reduce((s, id) => s + (gm[id] || 0), 0);
+      } else {
+        renda = rm(quem).renda || 0;
+        gastos = (rm(quem).despesas || 0) + (cj.parte[quem] || 0);
+        guardado = gm[quem] || 0;
+      }
+      renda = r2(renda); gastos = r2(gastos); guardado = r2(guardado);
+      return { mes: m, renda, gastos, guardado, sobra: r2(renda - gastos - guardado) };
+    });
+  }
+
+  const api = { r2, mesDe, addMeses, difMeses, addMesesData, parseValor, gerarSerie, resumoPessoal, stable, divisao, conjuntoMes, cofrinho, cartaoPessoa, porCategoria, idFixa, fixasAGerar, orcamento, evolucao };
   root.FL = api;
 })(typeof window !== 'undefined' ? window : globalThis);

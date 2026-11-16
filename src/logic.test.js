@@ -74,4 +74,29 @@ assert.strictEqual(ce.saldo, 6000 - 1800 - 900 - 700);
 assert.strictEqual(ce.comprometido, 2700);
 
 assert.strictEqual(F.stable({ b: 1, a: { d: 2, c: 3 } }), F.stable({ a: { c: 3, d: 2 }, b: 1 }));
+
+// contas fixas: internet dia 31 desde out/2026, até dez/2026; nov já existe; dez pulado
+const fx = [{ id: 'f1', valor: 120, dia: 31, inicio: '2026-10', pulados: ['2026-12'] }, { id: 'f2', valor: 50, dia: 5, inicio: '2026-11', ativa: false }];
+const ger = F.fixasAGerar(fx, new Set([F.idFixa('f1', '2026-11')]), '2027-01', '2026-11');
+assert.deepStrictEqual(ger.map((g) => g.id), ['fx_f1_2026-10', 'fx_f1_2027-01']);
+assert.strictEqual(ger[0].data, '2026-10-31');
+assert.strictEqual(ger[0].status, 'pago');
+assert.strictEqual(ger[1].data, '2027-01-31');
+assert.strictEqual(ger[1].status, 'pendente');
+assert.deepStrictEqual(F.fixasAGerar([{ id: 'f3', valor: 10, dia: 30, inicio: '2027-02' }], new Set(), '2027-02', '2026-11').map((g) => g.data), ['2027-02-28']);
+
+// orçamento
+const orc = F.orcamento([['mercado', 1250], ['lazer', 170], ['saude', 90]], { mercado: 1200, lazer: 200, transporte: 300 });
+assert.deepStrictEqual(orc.linhas.map((l) => [l.cat, l.status]), [['mercado', 'estourou'], ['lazer', 'perto'], ['transporte', 'ok'], ['saude', 'sem']]);
+assert.strictEqual(orc.linhas[0].sobra, -50);
+assert.deepStrictEqual(orc.total, { gasto: 1420, limite: 1700, sobra: 280 });
+assert.strictEqual(orc.alertas.length, 2);
+assert.strictEqual(F.orcamento([['mercado', 10]], {}).total, null);
+
+// evolução: nov/2026 do exemplo acima
+const ev = F.evolucao(['2026-10', '2026-11'], [E, C], resumos, conj, movs, {}, 'casal');
+assert.deepStrictEqual(ev[1], { mes: '2026-11', renda: 10000, gastos: 1800 + 800 + 1500, guardado: 1000, sobra: 10000 - 4100 - 1000 });
+assert.strictEqual(ev[0].gastos, 999);
+const evE = F.evolucao(['2026-11'], [E, C], resumos, conj, movs, {}, 'e');
+assert.deepStrictEqual(evE[0], { mes: '2026-11', renda: 6000, gastos: 1800 + 900, guardado: 700, sobra: 6000 - 2700 - 700 });
 console.log('OK — todos os testes passaram');

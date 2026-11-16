@@ -12,6 +12,8 @@ App web para o casal controlar renda, despesas pessoais e do casal, a divisão p
   - `resumos/{uid}` — totais do mês de cada um (o que o outro enxerga).
   - `conjunto`, `cofrinho` — os dois leem; cada um altera só o que lançou.
   - `membros`, `config`, `acertos` — nome/cor, divisão do casal, meta da viagem e acerto do mês.
+  - `usuarios/{uid}/fixas` e `fixasCasal` — contas fixas; o app lança sozinho os meses que faltam (até o mês seguinte). Só quem paga gera os lançamentos das contas fixas do casal.
+  - `usuarios/{uid}/config/limites` e `config/limitesCasal` — limites mensais por categoria (orçamento e alertas).
 
 ## Desenvolvimento
 - Código-fonte em `src/`. `npm run build` gera `index.html` e `app.js` na raiz (publicados pelo GitHub Pages).
